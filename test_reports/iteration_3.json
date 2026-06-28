@@ -1,0 +1,29 @@
+{
+  "summary": "Re-verified fixes for iteration_2 bugs. All 12/12 P1/P2 tests now pass (vs 10/12 before). Added a dedicated /app/backend/tests/test_iteration3_fixes.py covering Bug 1 (enabled_coins=[]), Bug 2 (max_daily_trades cap), Bug 2b (daily_loss_limit_usd), and regression endpoints - 4/4 pass. Full regression suite test_arbitrage_api.py 18/18 pass. Total 34/34 backend tests green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_p1p2_enhancements.py",
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/backend/tests/test_arbitrage_api.py",
+    "/app/test_reports/pytest/p1p2_results.xml",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug 1 fix verified: server.py:76, server.py:360, engine.py:104-105 now use explicit `is not None` checks so [] is honoured as 'no coins enabled'.",
+    "Bug 2 fix verified: server.py:117-122 - risk caps (loss_cap, trade_cap) re-read and checked INSIDE the per-opportunity loop with `break`, so cap is respected per-trade. Final daily_trades stays <= cap. Observed: baseline=0, cap=4, final=4.",
+    "Bug 2b fix verified: daily_loss_limit_usd check inside same loop. Once daily_pnl <= -abs(loss_cap), loop breaks and no more trades fire.",
+    "Lingering concerns from iteration_2 still apply (not retested as not in scope): /api/execute manual path still updates daily counters but does NOT enforce risk caps (manual bypass); /api/profit-series uses sort('ts', 1) which returns OLDEST 200 trades not newest; engine.binance_ws_task does not reset ws_connected in finally - only on exception."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_fixes.py (new)"
+  ],
+  "success_rate": {"backend": "100% (34/34)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "N/A",
+  "seed_data_creation": "Auto-exec tests inserted ~22 paper trades; cleaned up via db.trades.delete_many({}) at end. Final settings restored to defaults (enabled_coins=full 12, auto_exec=false, threshold_pct=0.5, max_daily_trades=0, daily_loss_limit_usd=0, paper_mode=true).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All P1/P2 bugs from iteration_2 are resolved. If retesting, run `python -m pytest backend/tests/test_iteration3_fixes.py -v -o addopts=` (37s). Daily counters are in-memory in engine.state; restart backend to reset baseline if running cap test repeatedly. Optional follow-ups not in current scope: enforce risk caps in /api/execute, fix /api/profit-series sort order, reset ws_connected in finally block in binance_ws_task.",
+  "rca of the issue": "Bug 1 RCA: previously `doc.get('enabled_coins') or list(COIN_LIST)` collapsed empty list to default. Fix: explicit None check. Verified by POST enabled_coins=[] -> GET /api/settings returns [] -> GET /api/opportunities returns [] within 10s. Bug 2 RCA: cap checks were outside the for-loop, so one outer tick could fire up to N (12 coins) trades. Fix: re-read caps + check + break inside the for-loop on each opp. Verified: cap=4 (baseline+4), final daily_trades=4, exact match. Bug 2b RCA: same outer-loop pattern. Fix: same in-loop break on daily_pnl <= -abs(loss_cap). Verified: daily_trades did not grow further after loss cap reached."
+}

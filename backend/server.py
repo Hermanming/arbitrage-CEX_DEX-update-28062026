@@ -73,7 +73,7 @@ async def load_settings_into_state():
         "trade_modal_usd": doc.get("trade_modal_usd", 100.0),
         "threshold_pct": doc.get("threshold_pct", 0.5),
         "slippage_pct": doc.get("slippage_pct", 0.3),
-        "enabled_coins": doc.get("enabled_coins") or list(COIN_LIST),
+        "enabled_coins": doc["enabled_coins"] if "enabled_coins" in doc and doc["enabled_coins"] is not None else list(COIN_LIST),
         "daily_loss_limit_usd": doc.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": doc.get("max_daily_trades", 0),
     })
@@ -110,19 +110,16 @@ async def auto_exec_task():
                     state.daily_pnl = 0.0
                     state.daily_trades = 0
 
-                loss_cap = float(state.settings.get("daily_loss_limit_usd") or 0)
-                trade_cap = int(state.settings.get("max_daily_trades") or 0)
-                # Hit daily loss cap (loss_cap > 0 and we have lost more)
-                if loss_cap > 0 and state.daily_pnl <= -abs(loss_cap):
-                    await asyncio.sleep(5.0)
-                    continue
-                if trade_cap > 0 and state.daily_trades >= trade_cap:
-                    await asyncio.sleep(5.0)
-                    continue
-
                 threshold = state.settings.get("threshold_pct", 0.5)
                 paper = state.settings.get("paper_mode", True)
                 for opp in list(state.opportunities):
+                    # Re-read caps each opp so they're respected per-trade
+                    loss_cap = float(state.settings.get("daily_loss_limit_usd") or 0)
+                    trade_cap = int(state.settings.get("max_daily_trades") or 0)
+                    if loss_cap > 0 and state.daily_pnl <= -abs(loss_cap):
+                        break
+                    if trade_cap > 0 and state.daily_trades >= trade_cap:
+                        break
                     if opp["net_profit_pct"] < threshold:
                         continue
                     coin = opp["coin"]
@@ -360,7 +357,7 @@ async def get_settings():
         "trade_modal_usd": state.settings.get("trade_modal_usd", 100.0),
         "threshold_pct": state.settings.get("threshold_pct", 0.5),
         "slippage_pct": state.settings.get("slippage_pct", 0.3),
-        "enabled_coins": state.settings.get("enabled_coins") or list(COIN_LIST),
+        "enabled_coins": state.settings["enabled_coins"] if state.settings.get("enabled_coins") is not None else list(COIN_LIST),
         "daily_loss_limit_usd": state.settings.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": state.settings.get("max_daily_trades", 0),
         "ws_connected": bool(state.ws_connected),

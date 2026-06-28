@@ -101,7 +101,8 @@ def compute_opportunities() -> list[dict]:
     threshold = state.settings.get("threshold_pct", 0.5)
     slippage = state.settings.get("slippage_pct", 0.3)
     modal = state.settings.get("trade_modal_usd", 100.0)
-    enabled = set(state.settings.get("enabled_coins") or COIN_LIST)
+    enabled_setting = state.settings.get("enabled_coins")
+    enabled = set(enabled_setting if enabled_setting is not None else COIN_LIST)
     fee_total = BINANCE_TAKER_FEE_PCT + JUPITER_AVG_FEE_PCT + slippage
 
     for coin, info in state.prices.items():

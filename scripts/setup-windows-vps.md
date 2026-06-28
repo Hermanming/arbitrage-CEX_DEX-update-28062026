@@ -81,7 +81,7 @@ REM Install dependencies
 pip install -r requirements.txt
 
 REM Copy & edit .env
-copy .env.example .env
+copy env.example.txt .env
 notepad .env
 ```
 
@@ -120,7 +120,7 @@ REM Install dependencies
 yarn install
 
 REM Copy & edit .env
-copy .env.example .env
+copy env.example.txt .env
 notepad .env
 ```
 

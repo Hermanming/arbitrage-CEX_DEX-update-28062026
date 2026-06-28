@@ -70,7 +70,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Copy env template & isi nilai
-cp .env.example .env
+cp env.example.txt .env
 # Edit .env:
 # - MONGO_URL (default mongodb://localhost:27017 untuk local)
 # - FERNET_KEY (generate sekali, simpan di password manager)
@@ -85,7 +85,7 @@ uvicorn server:app --host 0.0.0.0 --port 8001 --reload
 ```bash
 cd ../frontend
 yarn install
-cp .env.example .env
+cp env.example.txt .env
 # Edit .env -> REACT_APP_BACKEND_URL=http://localhost:8001
 
 yarn start          # dev mode (port 3000)

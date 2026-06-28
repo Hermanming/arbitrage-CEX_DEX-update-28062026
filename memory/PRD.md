@@ -40,14 +40,24 @@
 - `GET /coins` — coin list.
 
 ## What's Implemented (2026-02-XX)
-- Realtime polling (4s) Binance + Jupiter for 12 coins.
-- Opportunity calculation with fees (CEX 0.1% + DEX 0.25% + user slippage %).
+- Realtime polling (4s without WS, 15s as fallback when WS up) Binance + Jupiter for 12 coins.
+- **WebSocket Binance** (`wss://data-stream.binance.vision`) for sub-second CEX updates with reconnect & exponential backoff.
+- Opportunity calculation with fees (CEX 0.1% + DEX 0.25% + user slippage %), throttled to ~5 recompute/sec on WS.
 - Auto-execution loop (30s throttle per coin) when toggled.
+- **Risk caps**: `daily_loss_limit_usd` and `max_daily_trades` enforced per-trade in BOTH auto-exec and manual /api/execute.
+- **Per-coin enable/disable** via `enabled_coins` setting. Filter in `compute_opportunities`.
+- **Cumulative profit chart** (recharts) at `/api/profit-series` (most recent 200 trades).
+- WS connectivity badge + daily PnL/trade count on dashboard top bar.
 - Paper trade simulator records profit_usd into Mongo.
 - Live trade leg: Binance market order via python-binance + Jupiter v1 swap via solders.
 - Telegram notify on each trade + 15-min balance snapshot.
-- Bloomberg-style dark terminal UI with stats cards, opportunities, screening, history.
-- Settings page for credentials (encrypted), risk params, mode toggles.
+- Bloomberg-style dark terminal UI.
+- Settings page for credentials (encrypted), risk params, mode toggles, coin universe selector.
+
+## Backend Tests
+- Iteration 1: 18/18 (initial endpoints).
+- Iteration 2: 10/12 (P1/P2 - 2 bugs found).
+- Iteration 3: 12/12 + 18/18 regression = **34/34** after fixes.
 
 ## Pending / Backlog
 - P1: Per-coin enable/disable in UI.

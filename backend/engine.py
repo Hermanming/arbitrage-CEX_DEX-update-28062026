@@ -189,31 +189,33 @@ async def binance_ws_task():
                     state.ws_connected = True
                     backoff = 2.0
                     logger.info(f"Binance WS connected via {url.split('//')[1].split('/')[0]}")
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                            data = msg.get("data") or {}
-                            sym = data.get("s")
-                            last = data.get("c")
-                            if not sym or not last:
-                                continue
-                            coin = sym_to_coin.get(sym)
-                            if not coin:
-                                continue
-                            prev = state.prices.get(coin, {})
-                            state.prices[coin] = {
-                                "coin": coin,
-                                "binance": float(last),
-                                "jupiter": prev.get("jupiter"),
-                                "ts": datetime.now(timezone.utc).isoformat(),
-                            }
-                            # throttle opportunity recompute to ~5/sec
-                            now_t = time.time()
-                            if now_t - last_compute > 0.2:
-                                state.opportunities = compute_opportunities()
-                                last_compute = now_t
-                        except Exception:
-                            pass
+                    try:
+                        async for raw in ws:
+                            try:
+                                msg = json.loads(raw)
+                                data = msg.get("data") or {}
+                                sym = data.get("s")
+                                last = data.get("c")
+                                if not sym or not last:
+                                    continue
+                                coin = sym_to_coin.get(sym)
+                                if not coin:
+                                    continue
+                                prev = state.prices.get(coin, {})
+                                state.prices[coin] = {
+                                    "coin": coin,
+                                    "binance": float(last),
+                                    "jupiter": prev.get("jupiter"),
+                                    "ts": datetime.now(timezone.utc).isoformat(),
+                                }
+                                now_t = time.time()
+                                if now_t - last_compute > 0.2:
+                                    state.opportunities = compute_opportunities()
+                                    last_compute = now_t
+                            except Exception:
+                                pass
+                    finally:
+                        state.ws_connected = False
             except Exception as e:
                 state.ws_connected = False
                 logger.warning(f"Binance WS error ({url[:40]}...): {e}")

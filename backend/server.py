@@ -320,9 +320,10 @@ async def get_stats():
 
 @api.get("/profit-series")
 async def profit_series(limit: int = 200):
-    """Returns cumulative profit time-series for the chart."""
-    cur = db.trades.find({}, {"_id": 0, "ts": 1, "profit_usd": 1, "coin": 1}).sort("ts", 1).limit(limit)
+    """Returns cumulative profit time-series (most recent N trades, oldest first for the chart)."""
+    cur = db.trades.find({}, {"_id": 0, "ts": 1, "profit_usd": 1, "coin": 1}).sort("ts", -1).limit(limit)
     docs = await cur.to_list(length=limit)
+    docs.reverse()  # chronological for the chart
     cum = 0.0
     out = []
     for d in docs:
@@ -404,6 +405,20 @@ async def execute_manual(payload: ExecuteOpportunityIn):
     opp = next((o for o in state.opportunities if o["id"] == payload.opportunity_id), None)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found or expired")
+    # Reset daily counters if date changed
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if state.daily_date != today:
+        state.daily_date = today
+        state.daily_pnl = 0.0
+        state.daily_trades = 0
+    # Enforce risk caps for manual too
+    loss_cap = float(state.settings.get("daily_loss_limit_usd") or 0)
+    trade_cap = int(state.settings.get("max_daily_trades") or 0)
+    if loss_cap > 0 and state.daily_pnl <= -abs(loss_cap):
+        raise HTTPException(status_code=400, detail=f"Daily loss limit reached (${state.daily_pnl:.2f})")
+    if trade_cap > 0 and state.daily_trades >= trade_cap:
+        raise HTTPException(status_code=400, detail=f"Daily trade cap reached ({state.daily_trades}/{trade_cap})")
+
     paper = state.settings.get("paper_mode", True)
     if paper:
         trade = await execute_trade_simulation(opp)
@@ -417,12 +432,6 @@ async def execute_manual(payload: ExecuteOpportunityIn):
     trade["trigger"] = "manual"
     await db.trades.insert_one({**trade, "_id": trade["id"]})
     await _notify_trade(trade)
-    # Update daily counters for risk caps
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if state.daily_date != today:
-        state.daily_date = today
-        state.daily_pnl = 0.0
-        state.daily_trades = 0
     state.daily_trades += 1
     state.daily_pnl += float(trade.get("profit_usd") or 0)
     return trade

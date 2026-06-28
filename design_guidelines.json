@@ -1,0 +1,108 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Terminal Variant)",
+  "design_philosophy": "Strict data density. Function over form. Zero unnecessary decorations. Exposed grid lines. High contrast for readability of fast-moving numbers. Emotional tone: Elite precision, command-center focus.",
+  "typography": {
+    "primary_font": "IBM Plex Sans",
+    "mono_font": "IBM Plex Mono",
+    "hierarchy": {
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight text-[#FFFFFF]",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight text-[#E2E8F0]",
+      "h3": "text-lg font-medium tracking-tight text-[#CBD5E1]",
+      "body": "text-sm text-[#94A3B8]",
+      "data_large": "text-2xl sm:text-3xl font-mono tracking-tight",
+      "data_small": "text-xs font-mono uppercase tracking-[0.1em]"
+    }
+  },
+  "colors": {
+    "background": {
+      "main": "#060709",
+      "surface": "#0C0E12",
+      "surface_hover": "#13161C",
+      "glass": "rgba(12, 14, 18, 0.8)"
+    },
+    "border": {
+      "default": "#1E2229",
+      "focus": "#333A45",
+      "active": "#00FF66"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#94A3B8",
+      "muted": "#475569"
+    },
+    "trading": {
+      "profit_up": "#00FF66",
+      "loss_down": "#FF3333",
+      "neutral": "#00D1FF",
+      "warning": "#FFB800"
+    }
+  },
+  "layout_and_spacing": {
+    "strategy": "The Control Room Grid",
+    "container": "w-full max-w-[1600px] mx-auto p-4 md:p-6",
+    "grid_system": "grid grid-cols-1 md:grid-cols-4 gap-4",
+    "borders": "Expose the skeleton. Heavy use of border-collapse style layouts for tables and stats.",
+    "card_style": "Cardless architecture. Flat background (bg-[#0C0E12]), 1px solid border (border-[#1E2229]), zero shadow, zero border-radius (rounded-none)."
+  },
+  "components": {
+    "navigation": {
+      "type": "Top Bar Control Panel",
+      "style": "Solid background #060709 with hard bottom border #1E2229. Contains mode switchers.",
+      "elements": ["Logo/Title", "Paper/Live Switcher", "Auto/Manual Switcher", "Settings Link"]
+    },
+    "stats_cards": {
+      "layout": "Grid cols-2 md:grid-cols-4 across the top",
+      "content": ["Total Profit", "Total Trade", "Winrate", "Live Opportunities"],
+      "style": "Bordered cells. Mono font values. Colored text for profit/winrate depending on positive/negative."
+    },
+    "data_tables": {
+      "usage": "Screening Real-time & Trade History",
+      "style": "Dense tabular layout. text-sm body, text-xs header. 1px borders for all cells. Hover effects on rows (bg-[#13161C]).",
+      "alignment": "Numbers right-aligned, Monospace. Assets left-aligned."
+    },
+    "forms": {
+      "usage": "Settings Page for API keys and thresholds",
+      "style": "Brutalist forms. Square corners (rounded-none), dark inputs, thin borders. Primary CTA is Terminal Green."
+    }
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "instructions": "Run: yarn add @phosphor-icons/react. Use Regular or Light weights."
+  },
+  "animations": {
+    "micro_interactions": "Instant changes. No slow transitions. Fast, responsive feel.",
+    "data_updates": "Momentary cell background flash (green/red) when a price updates."
+  },
+  "data_testids": [
+    "nav-paper-live-switcher",
+    "nav-auto-manual-switcher",
+    "nav-settings-link",
+    "nav-dashboard-link",
+    "stat-total-profit",
+    "stat-total-trade",
+    "stat-winrate",
+    "stat-live-opportunities",
+    "table-screening-row",
+    "table-history-row",
+    "btn-manual-execute",
+    "form-api-binance-key",
+    "form-api-binance-secret",
+    "form-phantom-key",
+    "form-telegram-token",
+    "form-telegram-chatid",
+    "form-trade-modal",
+    "form-trade-threshold",
+    "form-trade-slippage",
+    "form-settings-save"
+  ],
+  "instructions_to_main_agent": [
+    "CRITICAL: Use .js and .jsx extensions for React files. Do not use TypeScript (.ts/.tsx).",
+    "Initialize Tailwind with the specific colors provided in this JSON.",
+    "Set Shadcn UI border-radius to 0 globally in CSS variables.",
+    "Build the dashboard using pure CSS Grid with exposed 1px borders, avoiding generic soft cards.",
+    "Use IBM Plex Sans for UI text and IBM Plex Mono strictly for all numbers and tables.",
+    "Implement simulated real-time data flashing (background turns briefly green or red on value change).",
+    "Include the exact data-testids on interactive elements."
+  ]
+}

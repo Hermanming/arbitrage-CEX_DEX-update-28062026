@@ -82,6 +82,8 @@ memory/test_credentials.md
 android-sdk/frontend/node_modules/.cache/default-development/3.pack
 .env
 .env.*
+!.env.example
+!**/.env.example
 *.env
 credentials.json
 *.key

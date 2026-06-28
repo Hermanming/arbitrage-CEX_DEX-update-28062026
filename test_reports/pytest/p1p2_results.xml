@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="12" time="38.777" timestamp="2026-06-28T13:33:31.082099+00:00" hostname="agent-env-bea250ef-cff9-4930-a8f7-9897c4a847ba"><testcase classname="tests.test_p1p2_enhancements.TestNewSettingsFields" name="test_settings_exposes_new_fields" time="0.256" /><testcase classname="tests.test_p1p2_enhancements.TestStatsNewFields" name="test_stats_has_ws_and_daily" time="0.045" /><testcase classname="tests.test_p1p2_enhancements.TestStatsNewFields" name="test_ws_connected_becomes_true" time="0.043" /><testcase classname="tests.test_p1p2_enhancements.TestProfitSeries" name="test_profit_series_endpoint_exists" time="0.043" /><testcase classname="tests.test_p1p2_enhancements.TestProfitSeries" name="test_profit_series_grows_after_execute" time="0.257" /><testcase classname="tests.test_p1p2_enhancements.TestEnabledCoinsFilter" name="test_filter_to_3_coins" time="6.140" /><testcase classname="tests.test_p1p2_enhancements.TestEnabledCoinsFilter" name="test_empty_enabled_coins_returns_no_opps" time="5.177"><failure message="AssertionError: Expected empty opps when enabled_coins=[], got 10 (settings.enabled_coins=['BONK', 'ORCA', 'PYTH', 'JTO', 'RAY', 'WIF', 'SOL', 'JUP', 'RENDER', 'POPCAT', 'MEW', 'IO'])&#10;assert [{'id': 'IO-1...63, ...}, ...] == []&#10;  &#10;  Left contains 10 more items, first extra item: {'id': 'IO-1782653622765', 'coin': 'IO', 'cex_price': 0.1717, 'dex_price': 0.17073803952540625, ...}&#10;  &#10;  Full diff:&#10;  - []&#10;  + [&#10;  +     {...&#10;  &#10;  ...Full output truncated (130 lines hidden), use '-vv' to show">backend/tests/test_p1p2_enhancements.py:157: in test_empty_enabled_coins_returns_no_opps
+    assert opps == [], (
+E   AssertionError: Expected empty opps when enabled_coins=[], got 10 (settings.enabled_coins=['BONK', 'ORCA', 'PYTH', 'JTO', 'RAY', 'WIF', 'SOL', 'JUP', 'RENDER', 'POPCAT', 'MEW', 'IO'])
+E   assert [{'id': 'IO-1...63, ...}, ...] == []
+E     
+E     Left contains 10 more items, first extra item: {'id': 'IO-1782653622765', 'coin': 'IO', 'cex_price': 0.1717, 'dex_price': 0.17073803952540625, ...}
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     {...
+E     
+E     ...Full output truncated (130 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_p1p2_enhancements.TestRiskCaps" name="test_risk_caps_persist" time="1.024" /><testcase classname="tests.test_p1p2_enhancements.TestRiskCaps" name="test_max_daily_trades_cap_enforced" time="10.258"><failure message="AssertionError: max_daily_trades cap breached: final=11 &gt; cap=4&#10;assert 11 &lt;= 4">backend/tests/test_p1p2_enhancements.py:214: in test_max_daily_trades_cap_enforced
+    assert final_dt &lt;= cap, (
+E   AssertionError: max_daily_trades cap breached: final=11 &gt; cap=4
+E   assert 11 &lt;= 4</failure></testcase><testcase classname="tests.test_p1p2_enhancements.TestRiskCaps" name="test_daily_pnl_reflects_today_trades" time="0.047" /><testcase classname="tests.test_p1p2_enhancements.TestWsPriceFreshness" name="test_prices_present_and_change" time="15.093" /><testcase classname="tests.test_p1p2_enhancements" name="test_zz_final_reset" time="0.170" /></testsuite></testsuites>

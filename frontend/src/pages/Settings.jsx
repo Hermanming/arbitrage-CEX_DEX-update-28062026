@@ -54,6 +54,9 @@ export default function Settings() {
     slippage_pct: 0.3,
     paper_mode: true,
     auto_exec: false,
+    enabled_coins: [],
+    daily_loss_limit_usd: 0,
+    max_daily_trades: 0,
   });
   const [current, setCurrent] = useState({});
   const [saving, setSaving] = useState(false);
@@ -71,6 +74,9 @@ export default function Settings() {
         paper_mode: data.paper_mode ?? true,
         auto_exec: data.auto_exec ?? false,
         telegram_chat_id: data.telegram_chat_id ?? "",
+        enabled_coins: data.enabled_coins ?? data.all_coins ?? [],
+        daily_loss_limit_usd: data.daily_loss_limit_usd ?? 0,
+        max_daily_trades: data.max_daily_trades ?? 0,
       }));
     } catch (e) {
       toast.error("Could not load settings");
@@ -92,6 +98,9 @@ export default function Settings() {
         slippage_pct: parseFloat(s.slippage_pct) || 0,
         paper_mode: !!s.paper_mode,
         auto_exec: !!s.auto_exec,
+        enabled_coins: s.enabled_coins,
+        daily_loss_limit_usd: parseFloat(s.daily_loss_limit_usd) || 0,
+        max_daily_trades: parseInt(s.max_daily_trades) || 0,
       };
       if (s.binance_api_key) payload.binance_api_key = s.binance_api_key;
       if (s.binance_api_secret) payload.binance_api_secret = s.binance_api_secret;
@@ -130,6 +139,19 @@ export default function Settings() {
 
   const setField = (k) => (e) => setS({ ...s, [k]: e.target.value });
   const setBool = (k) => (e) => setS({ ...s, [k]: e.target.checked });
+
+  const toggleCoin = (coin) => {
+    const enabled = new Set(s.enabled_coins);
+    if (enabled.has(coin)) enabled.delete(coin);
+    else enabled.add(coin);
+    setS({ ...s, enabled_coins: Array.from(enabled) });
+  };
+
+  const setAllCoins = (on) => {
+    setS({ ...s, enabled_coins: on ? (current.all_coins || []) : [] });
+  };
+
+  const allCoins = current.all_coins || [];
 
   return (
     <div className="w-full max-w-[1100px] mx-auto px-4 md:px-6 py-6">
@@ -284,6 +306,80 @@ export default function Settings() {
                 <div className="text-[10px] text-[#475569] font-mono">Bot trades on threshold hit</div>
               </div>
             </label>
+          </div>
+        </section>
+
+        {/* Risk Caps */}
+        <section className="border border-[#1E2229] bg-[#0C0E12]">
+          <header className="px-4 py-3 border-b border-[#1E2229] text-xs font-mono uppercase tracking-[0.2em] text-[#CBD5E1]">
+            Risk Caps · Safety Switches
+          </header>
+          <div className="p-4 md:p-6 grid md:grid-cols-2 gap-5">
+            <Field label="Daily Loss Limit (USD)" hint="Halt auto-exec when daily PnL ≤ -limit. 0 = no cap.">
+              <input
+                type="number"
+                step="0.01"
+                value={s.daily_loss_limit_usd}
+                onChange={setField("daily_loss_limit_usd")}
+                className="w-full px-3 py-2 font-mono text-sm border border-[#1E2229]"
+                style={{ borderRadius: 0 }}
+              />
+            </Field>
+            <Field label="Max Daily Trades" hint="Halt auto-exec after N trades today. 0 = no cap.">
+              <input
+                type="number"
+                step="1"
+                value={s.max_daily_trades}
+                onChange={setField("max_daily_trades")}
+                className="w-full px-3 py-2 font-mono text-sm border border-[#1E2229]"
+                style={{ borderRadius: 0 }}
+              />
+            </Field>
+          </div>
+        </section>
+
+        {/* Coin Selector */}
+        <section className="border border-[#1E2229] bg-[#0C0E12]">
+          <header className="px-4 py-3 border-b border-[#1E2229] flex items-center justify-between">
+            <div className="text-xs font-mono uppercase tracking-[0.2em] text-[#CBD5E1]">
+              Coin Universe · {s.enabled_coins.length}/{allCoins.length} active
+            </div>
+            <div className="flex gap-1 text-[10px] font-mono uppercase tracking-[0.15em]">
+              <button
+                type="button"
+                onClick={() => setAllCoins(true)}
+                className="px-2 py-1 border border-[#1E2229] text-[#94A3B8] hover:bg-[#13161C]"
+              >
+                Enable all
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllCoins(false)}
+                className="px-2 py-1 border border-[#1E2229] text-[#94A3B8] hover:bg-[#13161C]"
+              >
+                Clear
+              </button>
+            </div>
+          </header>
+          <div className="p-4 md:p-6 grid grid-cols-3 md:grid-cols-6 gap-2">
+            {allCoins.map((coin) => {
+              const on = s.enabled_coins.includes(coin);
+              return (
+                <button
+                  key={coin}
+                  type="button"
+                  data-testid={`coin-toggle-${coin}`}
+                  onClick={() => toggleCoin(coin)}
+                  className={`px-3 py-2 border font-mono text-xs uppercase tracking-[0.15em] ${
+                    on
+                      ? "border-[#00FF66] text-[#00FF66] bg-[#0C0E12]"
+                      : "border-[#1E2229] text-[#475569] hover:bg-[#13161C]"
+                  }`}
+                >
+                  {coin}
+                </button>
+              );
+            })}
           </div>
         </section>
 

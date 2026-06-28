@@ -20,6 +20,7 @@ load_dotenv(ROOT_DIR / ".env")
 from constants import COIN_LIST, TOKENS
 from crypto_utils import encrypt, decrypt, mask
 from engine import (
+    binance_ws_task,
     execute_trade_live,
     execute_trade_simulation,
     price_polling_task,
@@ -52,6 +53,9 @@ class SettingsIn(BaseModel):
     trade_modal_usd: Optional[float] = None
     threshold_pct: Optional[float] = None
     slippage_pct: Optional[float] = None
+    enabled_coins: Optional[list[str]] = None
+    daily_loss_limit_usd: Optional[float] = None
+    max_daily_trades: Optional[int] = None
 
 
 class ExecuteOpportunityIn(BaseModel):
@@ -69,6 +73,9 @@ async def load_settings_into_state():
         "trade_modal_usd": doc.get("trade_modal_usd", 100.0),
         "threshold_pct": doc.get("threshold_pct", 0.5),
         "slippage_pct": doc.get("slippage_pct", 0.3),
+        "enabled_coins": doc.get("enabled_coins") or list(COIN_LIST),
+        "daily_loss_limit_usd": doc.get("daily_loss_limit_usd", 0.0),
+        "max_daily_trades": doc.get("max_daily_trades", 0),
     })
     state.creds = {
         "binance_api_key": doc.get("binance_api_key", ""),
@@ -96,6 +103,23 @@ async def auto_exec_task():
     while True:
         try:
             if state.settings.get("auto_exec"):
+                # Reset daily counters at UTC date change
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if state.daily_date != today:
+                    state.daily_date = today
+                    state.daily_pnl = 0.0
+                    state.daily_trades = 0
+
+                loss_cap = float(state.settings.get("daily_loss_limit_usd") or 0)
+                trade_cap = int(state.settings.get("max_daily_trades") or 0)
+                # Hit daily loss cap (loss_cap > 0 and we have lost more)
+                if loss_cap > 0 and state.daily_pnl <= -abs(loss_cap):
+                    await asyncio.sleep(5.0)
+                    continue
+                if trade_cap > 0 and state.daily_trades >= trade_cap:
+                    await asyncio.sleep(5.0)
+                    continue
+
                 threshold = state.settings.get("threshold_pct", 0.5)
                 paper = state.settings.get("paper_mode", True)
                 for opp in list(state.opportunities):
@@ -119,6 +143,9 @@ async def auto_exec_task():
                         trade["trigger"] = "auto"
                         await db.trades.insert_one({**trade, "_id": trade["id"]})
                         await _notify_trade(trade)
+                        # update daily counters
+                        state.daily_trades += 1
+                        state.daily_pnl += float(trade.get("profit_usd") or 0)
                     except Exception as e:
                         logger.exception(f"auto exec error: {e}")
         except Exception as e:
@@ -234,6 +261,7 @@ async def lifespan(app: FastAPI):
     await load_settings_into_state()
     tasks = [
         asyncio.create_task(price_polling_task()),
+        asyncio.create_task(binance_ws_task()),
         asyncio.create_task(auto_exec_task()),
         asyncio.create_task(telegram_balance_task()),
     ]
@@ -287,7 +315,23 @@ async def get_stats():
         "live_opportunities": live_opps,
         "mode": "paper" if state.settings.get("paper_mode") else "live",
         "auto_exec": bool(state.settings.get("auto_exec")),
+        "ws_connected": bool(state.ws_connected),
+        "daily_pnl": round(state.daily_pnl, 4),
+        "daily_trades": state.daily_trades,
     }
+
+
+@api.get("/profit-series")
+async def profit_series(limit: int = 200):
+    """Returns cumulative profit time-series for the chart."""
+    cur = db.trades.find({}, {"_id": 0, "ts": 1, "profit_usd": 1, "coin": 1}).sort("ts", 1).limit(limit)
+    docs = await cur.to_list(length=limit)
+    cum = 0.0
+    out = []
+    for d in docs:
+        cum += float(d.get("profit_usd") or 0)
+        out.append({"ts": d["ts"], "cumulative": round(cum, 4), "trade_pnl": round(float(d.get("profit_usd") or 0), 4), "coin": d.get("coin")})
+    return out
 
 
 @api.get("/trades")
@@ -316,6 +360,11 @@ async def get_settings():
         "trade_modal_usd": state.settings.get("trade_modal_usd", 100.0),
         "threshold_pct": state.settings.get("threshold_pct", 0.5),
         "slippage_pct": state.settings.get("slippage_pct", 0.3),
+        "enabled_coins": state.settings.get("enabled_coins") or list(COIN_LIST),
+        "daily_loss_limit_usd": state.settings.get("daily_loss_limit_usd", 0.0),
+        "max_daily_trades": state.settings.get("max_daily_trades", 0),
+        "ws_connected": bool(state.ws_connected),
+        "all_coins": list(COIN_LIST),
     }
 
 
@@ -335,7 +384,11 @@ async def update_settings(payload: SettingsIn):
         update_doc["telegram_chat_id"] = encrypt(payload.telegram_chat_id) if payload.telegram_chat_id else ""
 
     # Plain settings
-    for f in ("paper_mode", "auto_exec", "trade_modal_usd", "threshold_pct", "slippage_pct"):
+    for f in (
+        "paper_mode", "auto_exec", "trade_modal_usd",
+        "threshold_pct", "slippage_pct", "enabled_coins",
+        "daily_loss_limit_usd", "max_daily_trades",
+    ):
         v = getattr(payload, f)
         if v is not None:
             update_doc[f] = v
@@ -367,6 +420,14 @@ async def execute_manual(payload: ExecuteOpportunityIn):
     trade["trigger"] = "manual"
     await db.trades.insert_one({**trade, "_id": trade["id"]})
     await _notify_trade(trade)
+    # Update daily counters for risk caps
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if state.daily_date != today:
+        state.daily_date = today
+        state.daily_pnl = 0.0
+        state.daily_trades = 0
+    state.daily_trades += 1
+    state.daily_pnl += float(trade.get("profit_usd") or 0)
     return trade
 
 

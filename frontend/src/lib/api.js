@@ -10,6 +10,7 @@ export const api = {
   opportunities: () => http.get("/opportunities").then((r) => r.data),
   stats: () => http.get("/stats").then((r) => r.data),
   trades: () => http.get("/trades").then((r) => r.data),
+  profitSeries: () => http.get("/profit-series").then((r) => r.data),
   settings: () => http.get("/settings").then((r) => r.data),
   saveSettings: (body) => http.post("/settings", body).then((r) => r.data),
   execute: (opportunity_id) =>

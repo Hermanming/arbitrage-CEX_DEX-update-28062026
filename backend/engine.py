@@ -34,11 +34,22 @@ class EngineState:
             "trade_modal_usd": 100.0,
             "threshold_pct": 0.5,
             "slippage_pct": 0.3,
+            "enabled_coins": list(TOKENS.keys()),
+            "daily_loss_limit_usd": 0.0,   # 0 = unlimited
+            "max_daily_trades": 0,         # 0 = unlimited
         }
         # encrypted credentials (raw encrypted strings, decrypted on use)
         self.creds: dict = {}
         # stats
         self.last_balance_notif: float = 0.0
+        # WebSocket status indicator
+        self.ws_connected: bool = False
+        # daily counters (reset by date string)
+        self.daily_date: str = ""
+        self.daily_pnl: float = 0.0
+        self.daily_trades: int = 0
+        # rolling cumulative profit series for chart [(ts_iso, cum_profit)]
+        self.profit_series: list[dict] = []
 
 
 state = EngineState()
@@ -90,9 +101,12 @@ def compute_opportunities() -> list[dict]:
     threshold = state.settings.get("threshold_pct", 0.5)
     slippage = state.settings.get("slippage_pct", 0.3)
     modal = state.settings.get("trade_modal_usd", 100.0)
+    enabled = set(state.settings.get("enabled_coins") or COIN_LIST)
     fee_total = BINANCE_TAKER_FEE_PCT + JUPITER_AVG_FEE_PCT + slippage
 
     for coin, info in state.prices.items():
+        if coin not in enabled:
+            continue
         cex = info.get("binance")
         dex = info.get("jupiter")
         if not cex or not dex or cex <= 0 or dex <= 0:
@@ -150,7 +164,60 @@ async def price_polling_task():
                 state.opportunities = compute_opportunities()
             except Exception as e:
                 logger.exception(f"price_polling error: {e}")
-            await asyncio.sleep(4.0)
+            # When WS is connected, poll only as a slower fallback for accuracy
+            await asyncio.sleep(15.0 if state.ws_connected else 4.0)
+
+
+async def binance_ws_task():
+    """Subscribe to Binance combined ticker streams for sub-second CEX updates."""
+    import json
+    streams = "/".join(f"{TOKENS[c][0].lower()}@ticker" for c in COIN_LIST)
+    # data-stream is the geo-friendly mirror for WS (same protocol as stream.binance.com)
+    urls = [
+        f"wss://data-stream.binance.vision/stream?streams={streams}",
+        f"wss://stream.binance.com:9443/stream?streams={streams}",
+    ]
+    backoff = 2.0
+    last_compute = 0.0
+    sym_to_coin = {TOKENS[c][0]: c for c in COIN_LIST}
+    while True:
+        for url in urls:
+            try:
+                import websockets
+                async with websockets.connect(url, ping_interval=20, ping_timeout=60, close_timeout=5, max_size=2**22) as ws:
+                    state.ws_connected = True
+                    backoff = 2.0
+                    logger.info(f"Binance WS connected via {url.split('//')[1].split('/')[0]}")
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                            data = msg.get("data") or {}
+                            sym = data.get("s")
+                            last = data.get("c")
+                            if not sym or not last:
+                                continue
+                            coin = sym_to_coin.get(sym)
+                            if not coin:
+                                continue
+                            prev = state.prices.get(coin, {})
+                            state.prices[coin] = {
+                                "coin": coin,
+                                "binance": float(last),
+                                "jupiter": prev.get("jupiter"),
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            }
+                            # throttle opportunity recompute to ~5/sec
+                            now_t = time.time()
+                            if now_t - last_compute > 0.2:
+                                state.opportunities = compute_opportunities()
+                                last_compute = now_t
+                        except Exception:
+                            pass
+            except Exception as e:
+                state.ws_connected = False
+                logger.warning(f"Binance WS error ({url[:40]}...): {e}")
+                await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
 
 
 async def execute_trade_simulation(opp: dict) -> dict:

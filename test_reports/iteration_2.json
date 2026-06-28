@@ -1,0 +1,46 @@
+{
+  "summary": "Tested all P1/P2 enhancements (profit-series, enabled_coins filter, risk caps, WebSocket, daily metrics). 10/12 tests passed. Two real bugs found: (1) enabled_coins=[] silently reverts to full coin list, (2) max_daily_trades cap is not enforced - inner per-coin loop fires many trades after a single outer-loop cap check. WebSocket connects successfully (ws_connected=true), profit-series cumulative arithmetic is correct, settings & stats expose all new fields, prices update over time.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/settings (enabled_coins=[])",
+        "issue": "Empty enabled_coins list is silently coerced back to ALL coins. Spec requires /api/opportunities to return [] when no coins are enabled, but it returns all 10-12 opps. Root cause: server.py `load_settings_into_state()` uses `doc.get('enabled_coins') or list(COIN_LIST)` which treats [] (falsy) as 'unset' and overrides with full coin list. Same pattern in /api/settings GET response.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "auto_exec_task (max_daily_trades cap)",
+        "issue": "Risk cap `max_daily_trades` is checked ONCE per outer while-loop iteration, but the inner `for opp in state.opportunities` loop can fire many trades in that same iteration. Observed: cap=4 (baseline=1), final daily_trades=11. The cap check `if state.daily_trades >= trade_cap: continue` must also be inside the per-opp loop (and likewise for daily_loss_limit_usd).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_p1p2_enhancements.py",
+    "/app/test_reports/pytest/p1p2_results.xml"
+  ],
+  "action_items": [
+    "FIX server.py load_settings_into_state(): change `doc.get('enabled_coins') or list(COIN_LIST)` to `doc.get('enabled_coins') if doc.get('enabled_coins') is not None else list(COIN_LIST)`. Same for GET /api/settings response. Also engine.compute_opportunities uses `set(state.settings.get('enabled_coins') or COIN_LIST)` - apply the same fix so [] means 'no coins enabled'.",
+    "FIX server.py auto_exec_task: move risk-cap checks inside the `for opp in state.opportunities` loop (just before firing) so the cap is respected per-trade, not per-tick. Also re-check daily_loss_limit_usd inside the loop."
+  ],
+  "critical_code_review_comments": [
+    "server.py auto_exec_task: cap checks placed outside the per-opp loop -> O(n) trades per tick can blow past max_daily_trades. Move inside loop.",
+    "server.py & engine.py: `enabled_coins or list(COIN_LIST)` collapses empty-list intent into all-coins intent. Use explicit None check.",
+    "engine.py compute_opportunities: line 104 `enabled = set(state.settings.get('enabled_coins') or COIN_LIST)` has the same falsy-empty bug.",
+    "GET /api/settings line 363 `state.settings.get('enabled_coins') or list(COIN_LIST)` masks the empty-list state from the API consumer.",
+    "engine.py binance_ws_task: state.ws_connected = True is set on connection open, but on disconnect the flag is reset only when an exception bubbles out of `async with`. If the WS server cleanly closes the stream (StopAsyncIteration on `async for raw in ws`), the flag stays True until reconnect attempt. Consider resetting in a finally block.",
+    "server.py /api/profit-series: query uses `.sort('ts', 1).limit(limit)` - with limit=200, oldest 200 trades returned. For a growing dataset this will miss recent data. Consider sort desc then reverse, or paginate.",
+    "server.py /api/execute manual path also updates daily counters but does NOT enforce risk caps - user can bypass max_daily_trades by clicking Execute manually. Decide if caps should apply to manual too."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p1p2_enhancements.py"
+  ],
+  "success_rate": {"backend": "83% (10/12)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "N/A - no credentials needed",
+  "seed_data_creation": "Auto-exec test inserted ~11 paper trades with trigger=auto during a 25s window. Manual execute_paper_trade inserted 1 trade. Total ~12 new trades in db.trades. Not cleaned up to preserve evidence; can be cleared via db.trades.delete_many({}).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run `python -m pytest backend/tests/test_p1p2_enhancements.py -v -o addopts=` (sequential, avoid xdist). Two failing tests highlight bugs in (a) empty enabled_coins handling and (b) max_daily_trades enforcement. After fixes, both tests should pass. Cap test uses baseline+3 to be resilient to pre-existing daily_trades counter. WS smoke check assumes 24/7 crypto market - if all prices stale for 15s, suspect WS regression.",
+  "rca of the issue": "Bug 1 (enabled_coins=[]): server.py:76 and server.py:363 and engine.py:104 all use `value or default` pattern which treats empty list as falsy. Reproduction: POST /api/settings {enabled_coins:[]}; GET /api/opportunities -> still returns opps for all coins. Mitigation: replace with explicit `if value is not None else default`. Bug 2 (cap bypass): server.py:119-121 checks cap before entering for-loop on line 125; the inner loop then fires every qualifying opp (up to 12 coins) in one iteration, bypassing the cap. Reproduction: set max_daily_trades=3, auto_exec=true, threshold=-100; within 30s daily_trades reaches 10-12 not 3. Mitigation: move `if trade_cap > 0 and state.daily_trades >= trade_cap: break` inside the for-loop right after the throttle check; same for daily_loss_limit_usd."
+}

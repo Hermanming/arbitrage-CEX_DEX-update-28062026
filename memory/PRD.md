@@ -53,19 +53,22 @@
 - Telegram notify on each trade + 15-min balance snapshot.
 - Bloomberg-style dark terminal UI.
 - Settings page for credentials (encrypted), risk params, mode toggles, coin universe selector.
+- **Master ON/OFF toggle** (`bot_enabled`) in top bar — scanner keeps streaming prices while execution is paused (gates BOTH auto-exec and manual `/api/execute`).
+- **Net profit in Telegram trade notifications** — `format_trade_msg` includes profit_usd, net_profit_pct, and lifetime totals (total_profit, total_trades, winrate).
+- **Reset Stats** button in Settings — `POST /api/reset-stats` wipes all trade history and resets in-memory daily counters.
+- **Enhanced 15-min Telegram balance snapshot** — now includes bot status header (ON/OFF, Paper/Live, Auto/Manual), today's PnL + trade count, lifetime stats, per-asset USD valuation (using state.prices), and grand total. New `POST /api/test-balance-telegram` endpoint + "Send Balance Now" button in Settings to preview on demand.
 
 ## Backend Tests
 - Iteration 1: 18/18 (initial endpoints).
 - Iteration 2: 10/12 (P1/P2 - 2 bugs found).
 - Iteration 3: 12/12 + 18/18 regression = **34/34** after fixes.
+- Iteration 4: **10/10** — bot_enabled toggle, /api/execute gate, /api/reset-stats, telegram_balance_task + /api/test-balance-telegram + notifier formatters (`/app/backend/tests/test_bot_toggle_and_balance.py`).
 
 ## Pending / Backlog
-- P1: Per-coin enable/disable in UI.
-- P1: Charts (recharts) of net profit over time.
-- P2: WebSocket-based price stream for sub-second updates.
+- P2: Bybit/OKX adapter as alternative CEX leg (for users blocked from Binance).
 - P2: Multi-DEX support (Raydium / Orca direct).
-- P2: Risk caps (daily loss limit, max concurrent trades).
+- P2: Refactor risk caps out of `engine.py` into a dedicated module.
 
 ## Next Action Items
-- Backend testing for all endpoints.
-- Optional frontend e2e once user provides credentials for live mode.
+- User to `git pull` on Windows VPS → restart NSSM services (or `yarn build` if frontend changed).
+- Optional: Verify periodic balance Telegram arrives every 15 min on user's VPS.

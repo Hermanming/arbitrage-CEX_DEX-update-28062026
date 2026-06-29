@@ -22,6 +22,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from constants import COIN_LIST, TOKENS
+from constants import BINANCE_TAKER_FEE_PCT, JUPITER_AVG_FEE_PCT
 from crypto_utils import encrypt, decrypt, mask
 from engine import (
     binance_ws_task,
@@ -163,6 +164,48 @@ async def auto_exec_task():
         except Exception as e:
             logger.exception(f"auto_exec_task: {e}")
         await asyncio.sleep(3.0)
+
+
+async def opportunity_logger_task():
+    """Persist live opportunities (spread > 0) to a TTL-bounded collection for backtesting.
+
+    Throttle: 30s minimum per coin. TTL: 7 days. Skips opportunities with non-positive spread."""
+    # Ensure TTL index (auto-deletes docs after 7 days)
+    try:
+        await db.opportunity_log.create_index(
+            "ts", expireAfterSeconds=7 * 86400
+        )
+        await db.opportunity_log.create_index([("coin", 1), ("ts", 1)])
+    except Exception as e:
+        logger.warning(f"opportunity_log index: {e}")
+
+    while True:
+        await asyncio.sleep(5)
+        try:
+            now_epoch = time.time()
+            for opp in list(state.opportunities):
+                if (opp.get("spread_pct") or 0) <= 0:
+                    continue
+                coin = opp["coin"]
+                if now_epoch - state.last_opp_log_ts.get(coin, 0) < 30:
+                    continue
+                state.last_opp_log_ts[coin] = now_epoch
+                doc = {
+                    "coin": coin,
+                    "ts": datetime.now(timezone.utc),  # BSON datetime for TTL
+                    "cex_price": float(opp["cex_price"]),
+                    "dex_price": float(opp["dex_price"]),
+                    "buy_side": opp["buy_side"],
+                    "sell_side": opp["sell_side"],
+                    "spread_pct": float(opp["spread_pct"]),
+                    "modal_usd": float(state.settings.get("trade_modal_usd", 100.0)),
+                }
+                try:
+                    await db.opportunity_log.insert_one(doc)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.exception(f"opportunity_logger_task: {e}")
 
 
 async def telegram_balance_task():
@@ -422,6 +465,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(auto_exec_task()),
         asyncio.create_task(telegram_balance_task()),
         asyncio.create_task(daily_summary_task()),
+        asyncio.create_task(opportunity_logger_task()),
     ]
     logger.info("Background tasks started")
     try:
@@ -695,6 +739,162 @@ async def export_trades_csv():
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class BacktestConfigIn(BaseModel):
+    name: str
+    threshold_pct: float
+    slippage_pct: float
+
+
+class BacktestRequest(BaseModel):
+    configs: list[BacktestConfigIn]
+    from_date: Optional[str] = None  # ISO datetime
+    to_date: Optional[str] = None
+
+
+def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+@api.get("/opportunity-log-stats")
+async def opportunity_log_stats():
+    count = await db.opportunity_log.count_documents({})
+    if count == 0:
+        return {"count": 0, "from_ts": None, "to_ts": None, "by_coin": []}
+    first = await db.opportunity_log.find_one({}, sort=[("ts", 1)])
+    last = await db.opportunity_log.find_one({}, sort=[("ts", -1)])
+    by_coin = await db.opportunity_log.aggregate([
+        {"$group": {
+            "_id": "$coin",
+            "count": {"$sum": 1},
+            "avg_spread": {"$avg": "$spread_pct"},
+            "max_spread": {"$max": "$spread_pct"},
+        }},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=50)
+    return {
+        "count": count,
+        "from_ts": first["ts"].isoformat() if hasattr(first["ts"], "isoformat") else str(first["ts"]),
+        "to_ts": last["ts"].isoformat() if hasattr(last["ts"], "isoformat") else str(last["ts"]),
+        "by_coin": [
+            {
+                "coin": d["_id"],
+                "count": d["count"],
+                "avg_spread_pct": round(d.get("avg_spread") or 0, 4),
+                "max_spread_pct": round(d.get("max_spread") or 0, 4),
+            }
+            for d in by_coin
+        ],
+    }
+
+
+@api.post("/clear-opportunity-log")
+async def clear_opportunity_log():
+    r = await db.opportunity_log.delete_many({})
+    state.last_opp_log_ts = {}
+    return {"deleted": r.deleted_count, "status": "ok"}
+
+
+@api.post("/backtest-strategies")
+async def backtest_strategies(req: BacktestRequest):
+    """Replay logged opportunities against multiple strategy configurations.
+
+    For each config, simulates the auto-exec loop (same 30s/coin throttle, same fee model)
+    and returns total trades, total profit, avg per trade, per-coin breakdown.
+    """
+    if not req.configs:
+        raise HTTPException(status_code=400, detail="At least one strategy config required")
+    if len(req.configs) > 5:
+        raise HTTPException(status_code=400, detail="Max 5 strategies per backtest")
+
+    flt: dict = {}
+    try:
+        rng = {}
+        if req.from_date:
+            rng["$gte"] = _parse_iso(req.from_date)
+        if req.to_date:
+            rng["$lte"] = _parse_iso(req.to_date)
+        if rng:
+            flt["ts"] = rng
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid from_date/to_date (use ISO 8601)")
+
+    opps_raw = await db.opportunity_log.find(flt).sort("ts", 1).to_list(length=200_000)
+    if not opps_raw:
+        return {
+            "opportunities_count": 0,
+            "duration_hours": 0,
+            "from_ts": None,
+            "to_ts": None,
+            "results": [],
+            "winner": None,
+        }
+
+    first_ts = opps_raw[0]["ts"]
+    last_ts = opps_raw[-1]["ts"]
+    duration_hours = max((last_ts - first_ts).total_seconds() / 3600.0, 1 / 3600.0)
+
+    results = []
+    for config in req.configs:
+        fee_total = BINANCE_TAKER_FEE_PCT + JUPITER_AVG_FEE_PCT + float(config.slippage_pct)
+        last_fired: dict[str, float] = {}
+        total_profit = 0.0
+        total_trades = 0
+        per_coin: dict[str, dict] = {}
+
+        for o in opps_raw:
+            spread = float(o.get("spread_pct") or 0)
+            net = spread - fee_total
+            if net < float(config.threshold_pct):
+                continue
+            coin = o["coin"]
+            ts_epoch = o["ts"].timestamp()
+            if ts_epoch - last_fired.get(coin, 0) < 30:
+                continue
+            last_fired[coin] = ts_epoch
+            modal = float(o.get("modal_usd") or 100.0)
+            profit = (net / 100.0) * modal
+            total_profit += profit
+            total_trades += 1
+            rec = per_coin.setdefault(coin, {"coin": coin, "profit": 0.0, "trades": 0})
+            rec["profit"] += profit
+            rec["trades"] += 1
+
+        coin_breakdown = [
+            {"coin": v["coin"], "profit": round(v["profit"], 4), "trades": v["trades"]}
+            for v in sorted(per_coin.values(), key=lambda x: x["profit"], reverse=True)
+        ]
+        avg_per_trade = (total_profit / total_trades) if total_trades else 0.0
+        profit_per_hour = total_profit / duration_hours
+
+        results.append({
+            "name": config.name,
+            "threshold_pct": config.threshold_pct,
+            "slippage_pct": config.slippage_pct,
+            "total_trades": total_trades,
+            "total_profit": round(total_profit, 4),
+            "avg_per_trade": round(avg_per_trade, 4),
+            "profit_per_hour": round(profit_per_hour, 4),
+            "projected_daily_profit": round(profit_per_hour * 24.0, 2),
+            "best_coin": coin_breakdown[0] if coin_breakdown else None,
+            "worst_coin": coin_breakdown[-1] if coin_breakdown else None,
+            "per_coin": coin_breakdown,
+        })
+
+    ranked = sorted(results, key=lambda r: r["total_profit"], reverse=True)
+    winner_name = ranked[0]["name"] if ranked and ranked[0]["total_profit"] > 0 else None
+
+    return {
+        "opportunities_count": len(opps_raw),
+        "duration_hours": round(duration_hours, 2),
+        "from_ts": first_ts.isoformat(),
+        "to_ts": last_ts.isoformat(),
+        "winner": winner_name,
+        "results": results,
+    }
 
 
 @api.post("/reset-stats")

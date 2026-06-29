@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { DASHBOARD } from "@/constants/testIds";
-import { Activity, Settings as Gear, Zap as Lightning, Bot as Robot } from "lucide-react";
+import { Activity, Settings as Gear, Zap as Lightning, Bot as Robot, BarChart3 } from "lucide-react";
 
 
 import { toast } from "sonner";
@@ -39,6 +39,8 @@ export default function TopBar() {
   };
 
   const isDashboard = location.pathname === "/";
+  const isBacktest = location.pathname === "/backtest";
+  const isSettings = location.pathname === "/settings";
 
   return (
     <header
@@ -73,10 +75,21 @@ export default function TopBar() {
             </span>
           </Link>
           <Link
+            to="/backtest"
+            data-testid="nav-backtest-link"
+            className={`px-3 py-1.5 border ${
+              isBacktest ? "border-[#FFB020] text-[#FFB020]" : "border-[#1E2229] text-[#94A3B8] hover:bg-[#13161C]"
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <BarChart3 size={12} weight="bold" /> Backtest
+            </span>
+          </Link>
+          <Link
             to="/settings"
             data-testid={DASHBOARD.navSettingsLink}
             className={`px-3 py-1.5 border ${
-              !isDashboard ? "border-[#00FF66] text-[#00FF66]" : "border-[#1E2229] text-[#94A3B8] hover:bg-[#13161C]"
+              isSettings ? "border-[#00FF66] text-[#00FF66]" : "border-[#1E2229] text-[#94A3B8] hover:bg-[#13161C]"
             }`}
           >
             <span className="inline-flex items-center gap-1.5">

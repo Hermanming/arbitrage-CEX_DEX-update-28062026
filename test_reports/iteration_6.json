@@ -1,0 +1,42 @@
+{
+  "summary": "Tested opportunity logger background task, /opportunity-log-stats, /clear-opportunity-log, /backtest-strategies (validation + correctness + date range + empty), TTL index, and the /backtest frontend page. All 9 pytest cases passed and frontend UI works end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_opp_log_and_backtest.py",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~923 lines — approaching the 700-line guideline. Consider splitting routes (backtest, telegram, daily-summary) into separate router modules.",
+    "Backtest simulator throttle uses opportunity-log timestamps (sparse 30s+ logs), so the 30s/coin throttle rarely filters anything in practice — semantics match auto_exec but in a degenerate way. Acceptable for current dataset granularity, but document this if future logging frequency increases.",
+    "opportunity_logger_task swallows individual insert exceptions silently (try/except pass at line 203). Acceptable but consider counting/logging duplicates for observability.",
+    "/backtest-strategies uses .to_list(length=200_000) — fine for now, but add pagination if dataset grows."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "none required",
+  "seed_data_creation": "6 synthetic opportunity_log docs seeded then cleaned up via pytest fixture (SOL x3, JUP x2, RAY x1). Live opportunity_log was also cleared then auto-repopulated by logger task within ~30s (verified 20-30 docs).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All previous iteration test files still in /app/backend/tests/. This iteration's new file is /app/backend/tests/test_opp_log_and_backtest.py. Opportunity logger runs every 5s, throttles 30s/coin, TTL=7d. Backtest simulator at /api/backtest-strategies. Frontend /backtest page works. server.py size is creeping up — flag if it crosses 1000 lines.",
+  "rca of the issue": "n/a — no bugs found",
+  "verified_features": [
+    "GET /opportunity-log-stats returns correct shape {count, from_ts, to_ts, by_coin[]}; per-coin avg/max spread present",
+    "POST /clear-opportunity-log returns {deleted, status:'ok'} and stats.count drops to 0",
+    "POST /backtest-strategies validation: empty configs->400, >5->400, bad ISO date->400",
+    "Backtest correctness with seeded data: threshold 0.1 -> 3 trades ($1.15), threshold 0.3 -> 2 trades, threshold 0.5 -> 1 trade. Winner field correct.",
+    "Backtest empty dataset returns opportunities_count=0, results=[], winner=null",
+    "Date range filter (from_date/to_date) limits opportunities correctly (3 within 15s window)",
+    "TTL index exists on 'ts' with expireAfterSeconds=604800",
+    "Logger runs ~30s with no exceptions in backend logs; logged 20+ docs",
+    "Frontend /backtest: all data-testids present (nav-backtest-link, btn-run-backtest, btn-clear-opp-log, backtest-name-0..2, backtest-threshold-0..2, backtest-slippage-0..2). Run Backtest renders backtest-results + backtest-row-0..2. Clear Log confirm-dialog flow works and toast shows."
+  ]
+}

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "@/App.css";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
+import Backtest from "@/pages/Backtest";
 import TopBar from "@/components/TopBar";
 import { Toaster } from "sonner";
 
@@ -31,6 +32,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/backtest" element={<Backtest />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

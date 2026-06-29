@@ -44,6 +44,7 @@ class EngineState:
         # stats
         self.last_balance_notif: float = 0.0
         self.last_daily_summary_date: str = ""  # WIB date string YYYY-MM-DD of last daily summary sent
+        self.last_opp_log_ts: dict[str, float] = {}  # coin -> last opportunity-log timestamp (throttle)
         # WebSocket status indicator
         self.ws_connected: bool = False
         # daily counters (reset by date string)

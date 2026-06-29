@@ -22,6 +22,10 @@ export const api = {
   dailySummary: (date) =>
     http.get("/daily-summary", { params: date ? { date } : {} }).then((r) => r.data),
   exportTradesCsvUrl: () => `${API}/export-trades-csv`,
+  opportunityLogStats: () => http.get("/opportunity-log-stats").then((r) => r.data),
+  clearOpportunityLog: () => http.post("/clear-opportunity-log").then((r) => r.data),
+  backtestStrategies: (configs, from_date, to_date) =>
+    http.post("/backtest-strategies", { configs, from_date, to_date }).then((r) => r.data),
   resetStats: () => http.post("/reset-stats").then((r) => r.data),
   coins: () => http.get("/coins").then((r) => r.data),
 };

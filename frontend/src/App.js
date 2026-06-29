@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "@/App.css";
 import Dashboard from "@/pages/Dashboard";
 import Settings from "@/pages/Settings";
 import TopBar from "@/components/TopBar";
 import { Toaster } from "sonner";
-import { api } from "@/lib/api";
 
-const SettingsContext = ({ children }) => children;
+// Module-level constant — avoid re-creating on every render
+const TOAST_OPTIONS = {
+  style: {
+    background: "#0C0E12",
+    border: "1px solid #1E2229",
+    color: "#FFFFFF",
+    borderRadius: 0,
+    fontFamily: "IBM Plex Mono, monospace",
+  },
+};
 
 function Layout({ children }) {
   return (
@@ -30,15 +37,7 @@ function App() {
       <Toaster
         position="bottom-right"
         theme="dark"
-        toastOptions={{
-          style: {
-            background: "#0C0E12",
-            border: "1px solid #1E2229",
-            color: "#FFFFFF",
-            borderRadius: 0,
-            fontFamily: "IBM Plex Mono, monospace",
-          },
-        }}
+        toastOptions={TOAST_OPTIONS}
       />
     </BrowserRouter>
   );

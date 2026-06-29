@@ -11,6 +11,11 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 
+// Module-level constants — avoid re-creating these on every render
+const CHART_MARGIN = { top: 8, right: 16, left: 4, bottom: 4 };
+const AXIS_TICK = { fontSize: 10, fontFamily: "IBM Plex Mono" };
+const AXIS_LINE = { stroke: "#1E2229" };
+
 function fmtTime(iso) {
   try {
     const d = new Date(iso);
@@ -52,7 +57,9 @@ export default function ProfitChart() {
       try {
         const series = await api.profitSeries();
         setData(series);
-      } catch (e) {}
+      } catch (e) {
+        console.error("ProfitChart.load failed:", e);
+      }
     };
     load();
     const t = setInterval(load, 8000);
@@ -82,21 +89,21 @@ export default function ProfitChart() {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
+            <LineChart data={data} margin={CHART_MARGIN}>
               <CartesianGrid stroke="#1E2229" strokeDasharray="3 3" />
               <XAxis
                 dataKey="ts"
                 tickFormatter={fmtTime}
                 stroke="#475569"
-                tick={{ fontSize: 10, fontFamily: "IBM Plex Mono" }}
+                tick={AXIS_TICK}
                 tickLine={false}
-                axisLine={{ stroke: "#1E2229" }}
+                axisLine={AXIS_LINE}
               />
               <YAxis
                 stroke="#475569"
-                tick={{ fontSize: 10, fontFamily: "IBM Plex Mono" }}
+                tick={AXIS_TICK}
                 tickLine={false}
-                axisLine={{ stroke: "#1E2229" }}
+                axisLine={AXIS_LINE}
                 width={50}
                 tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
               />

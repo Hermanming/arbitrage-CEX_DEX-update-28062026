@@ -17,7 +17,7 @@ export default function TopBar() {
       const s = await api.settings();
       setSettings(s);
     } catch (e) {
-      // ignore
+      console.error("TopBar.loadSettings failed:", e);
     }
   };
 

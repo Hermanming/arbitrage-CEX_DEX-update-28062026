@@ -27,7 +27,7 @@ export default function Dashboard() {
         setTrades(t);
       }
     } catch (e) {
-      // silent
+      console.error("Dashboard.loadAll failed:", e);
     }
   }, []);
 
@@ -35,7 +35,9 @@ export default function Dashboard() {
     try {
       const t = await api.trades();
       setTrades(t);
-    } catch (e) {}
+    } catch (e) {
+      console.error("Dashboard.loadTrades failed:", e);
+    }
   }, []);
 
   useEffect(() => {

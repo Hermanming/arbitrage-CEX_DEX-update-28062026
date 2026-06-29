@@ -433,7 +433,7 @@ export default function Settings() {
             <Field label="Drift Alert Threshold (%)" hint="Telegram alert when total coin qty drifts >X% from baseline. Default 5%.">
               <input
                 type="number"
-                step="0.5"
+                step="0.1"
                 min="0"
                 value={s.drift_alert_pct}
                 onChange={setField("drift_alert_pct")}

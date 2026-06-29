@@ -60,14 +60,19 @@
 - **Daily Summary Telegram @ 00:00 WIB (UTC+7)** — background task `daily_summary_task` aggregates the previous WIB day (total P&L, trades, wins/losses, winrate, avg/trade, best & worst coin, full per-coin breakdown). De-dup via persisted `last_daily_summary_date` in Mongo so restarts don't double-send. Endpoints: `GET /api/daily-summary?date=YYYY-MM-DD` + `POST /api/test-daily-summary`. UI: **Send Daily Summary** button in Settings.
 - **CSV export of trade history** — `GET /api/export-trades-csv` streams full history (ts, coin, mode, buy/sell side & price, modal, spread, profit, status, trigger, etc). UI: **Export Trades to CSV** button in Settings triggers browser download (`arb-trades-YYYYMMDD-HHMM.csv`).
 - **Strategy Backtest** (`/backtest` page) — Background `opportunity_logger_task` logs every live opportunity (spread > 0) to `db.opportunity_log` with throttle 30s/coin + TTL 7 days. New endpoints: `GET /api/opportunity-log-stats` (count, date range, per-coin sample), `POST /api/clear-opportunity-log`, `POST /api/backtest-strategies` (up to 5 configs `{name, threshold_pct, slippage_pct}` + optional date range). Simulator replays history applying same fee model + 30s/coin throttle as auto_exec. Returns per-config: total_trades, total_profit, avg_per_trade, profit_per_hour, projected_daily_profit, best/worst coin, per-coin breakdown, ranked with winner. UI: dedicated page with 3 default presets (Aggressive 0.2/0.2, Balanced 0.3/0.3, Conservative 0.5/0.5), side-by-side comparison table.
+- **Defensive Live-Trading Features** (iteration 7):
+    - **Pre-flight balance check** — `_preflight_balance_check()` runs before every live execute (auto + manual). Verifies USDT/USDC stable + coin inventory on both venues + 0.005 SOL gas on Phantom. Fail-open if API keys unset.
+    - **Inventory drift monitor** — `inventory_drift_task` (5min loop) compares current balances vs persisted baseline. Telegram alert when total drift > `drift_alert_pct` (default 5%) OR side imbalance > 40%. Throttled 1h/coin. Endpoints: `GET /api/inventory-drift`, `POST /api/inventory-baseline/reset`. UI: input + reset button in Settings.
+    - **Atomic Jupiter retry + auto-reverse** — `execute_trade_live` retries failed Jupiter swap 3× with backoff (0s/2s/5s). On final failure + `auto_reverse_on_partial=True`, auto-flattens CEX leg (opposite-side market order). New trade fields: `jupiter_attempts`, `reversed_cex`, `executed_qty`. Urgent Telegram alert via `_notify_partial` for status `partial`/`reversed`.
 
 ## Backend Tests
 - Iteration 1: 18/18 (initial endpoints).
 - Iteration 2: 10/12 (P1/P2 - 2 bugs found).
 - Iteration 3: 12/12 + 18/18 regression = **34/34** after fixes.
-- Iteration 4: **10/10** — bot_enabled toggle, /api/execute gate, /api/reset-stats, telegram_balance_task + /api/test-balance-telegram + notifier formatters (`/app/backend/tests/test_bot_toggle_and_balance.py`).
-- Iteration 5: **13/13** — daily summary aggregation, /api/daily-summary, /api/test-daily-summary, /api/export-trades-csv (`/app/backend/tests/test_daily_summary_and_csv.py`).
-- Iteration 6: **9/9** — opportunity logger, /api/opportunity-log-stats, /api/clear-opportunity-log, /api/backtest-strategies validation + correctness, TTL index, frontend /backtest page (`/app/backend/tests/test_opp_log_and_backtest.py`).
+- Iteration 4: **10/10** — bot_enabled toggle, /api/execute gate, /api/reset-stats, telegram_balance_task + /api/test-balance-telegram + notifier formatters.
+- Iteration 5: **13/13** — daily summary aggregation, /api/daily-summary, /api/test-daily-summary, /api/export-trades-csv.
+- Iteration 6: **9/9** — opportunity logger, /api/opportunity-log-stats, /api/clear-opportunity-log, /api/backtest-strategies validation + correctness, TTL index, frontend /backtest page.
+- Iteration 7: **15/15** — pre-flight balance check (5 scenarios), inventory drift math + endpoints, Jupiter retry source inspection, partial-trade Telegram formatter, frontend Settings new controls (`/app/backend/tests/test_defensive_features.py`).
 
 ## Pending / Backlog
 - P2: Bybit/OKX adapter as alternative CEX leg (for users blocked from Binance).

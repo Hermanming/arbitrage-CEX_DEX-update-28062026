@@ -97,6 +97,8 @@ async def load_settings_into_state():
         "telegram_bot_token": doc.get("telegram_bot_token", ""),
         "telegram_chat_id": doc.get("telegram_chat_id", ""),
     }
+    # Persisted daily-summary de-dup marker (survives restart)
+    state.last_daily_summary_date = doc.get("last_daily_summary_date", "")
 
 
 def _decrypt_cred(name: str) -> str:
@@ -370,6 +372,15 @@ async def daily_summary_task():
             sent = await send_telegram(tg_token, tg_chat, msg)
             if sent:
                 state.last_daily_summary_date = wib_today_str
+                # Persist to Mongo so a restart shortly after midnight WIB doesn't re-send
+                try:
+                    await db.settings.update_one(
+                        {"_id": SETTINGS_ID},
+                        {"$set": {"last_daily_summary_date": wib_today_str}},
+                        upsert=True,
+                    )
+                except Exception:
+                    pass
                 logger.info(f"Daily summary sent for {summary['wib_date']}")
         except Exception as e:
             logger.exception(f"daily_summary_task: {e}")

@@ -57,18 +57,23 @@
 - **Net profit in Telegram trade notifications** — `format_trade_msg` includes profit_usd, net_profit_pct, and lifetime totals (total_profit, total_trades, winrate).
 - **Reset Stats** button in Settings — `POST /api/reset-stats` wipes all trade history and resets in-memory daily counters.
 - **Enhanced 15-min Telegram balance snapshot** — now includes bot status header (ON/OFF, Paper/Live, Auto/Manual), today's PnL + trade count, lifetime stats, per-asset USD valuation (using state.prices), and grand total. New `POST /api/test-balance-telegram` endpoint + "Send Balance Now" button in Settings to preview on demand.
+- **Daily Summary Telegram @ 00:00 WIB (UTC+7)** — background task `daily_summary_task` aggregates the previous WIB day (total P&L, trades, wins/losses, winrate, avg/trade, best & worst coin, full per-coin breakdown). De-dup via persisted `last_daily_summary_date` in Mongo so restarts don't double-send. Endpoints: `GET /api/daily-summary?date=YYYY-MM-DD` + `POST /api/test-daily-summary`. UI: **Send Daily Summary** button in Settings.
+- **CSV export of trade history** — `GET /api/export-trades-csv` streams full history (ts, coin, mode, buy/sell side & price, modal, spread, profit, status, trigger, etc). UI: **Export Trades to CSV** button in Settings triggers browser download (`arb-trades-YYYYMMDD-HHMM.csv`).
 
 ## Backend Tests
 - Iteration 1: 18/18 (initial endpoints).
 - Iteration 2: 10/12 (P1/P2 - 2 bugs found).
 - Iteration 3: 12/12 + 18/18 regression = **34/34** after fixes.
 - Iteration 4: **10/10** — bot_enabled toggle, /api/execute gate, /api/reset-stats, telegram_balance_task + /api/test-balance-telegram + notifier formatters (`/app/backend/tests/test_bot_toggle_and_balance.py`).
+- Iteration 5: **13/13** — daily summary aggregation, /api/daily-summary, /api/test-daily-summary, /api/export-trades-csv (`/app/backend/tests/test_daily_summary_and_csv.py`).
 
 ## Pending / Backlog
 - P2: Bybit/OKX adapter as alternative CEX leg (for users blocked from Binance).
 - P2: Multi-DEX support (Raydium / Orca direct).
-- P2: Refactor risk caps out of `engine.py` into a dedicated module.
+- P2: Refactor server.py (now ~720 lines) — split routes / background tasks / balance helpers into separate modules.
+- P2: Store `trades.ts` as BSON datetime instead of ISO string + add index (currently relies on lexicographic ISO ordering for daily summary aggregation).
+- P2: True async streaming for CSV export (currently buffers in memory — fine until ~50k+ trades).
 
 ## Next Action Items
-- User to `git pull` on Windows VPS → restart NSSM services (or `yarn build` if frontend changed).
-- Optional: Verify periodic balance Telegram arrives every 15 min on user's VPS.
+- User to `git pull` on Windows VPS → `cd frontend && yarn build` → restart NSSM services.
+- Optional: Verify daily Telegram summary arrives at 00:00 WIB; verify CSV export downloads from VPS dashboard.

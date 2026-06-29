@@ -56,6 +56,7 @@ class SettingsIn(BaseModel):
     enabled_coins: Optional[list[str]] = None
     daily_loss_limit_usd: Optional[float] = None
     max_daily_trades: Optional[int] = None
+    bot_enabled: Optional[bool] = None
 
 
 class ExecuteOpportunityIn(BaseModel):
@@ -76,6 +77,7 @@ async def load_settings_into_state():
         "enabled_coins": doc["enabled_coins"] if "enabled_coins" in doc and doc["enabled_coins"] is not None else list(COIN_LIST),
         "daily_loss_limit_usd": doc.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": doc.get("max_daily_trades", 0),
+        "bot_enabled": doc.get("bot_enabled", True),
     })
     state.creds = {
         "binance_api_key": doc.get("binance_api_key", ""),
@@ -102,7 +104,7 @@ async def auto_exec_task():
     last_fired = {}  # coin -> timestamp, to throttle
     while True:
         try:
-            if state.settings.get("auto_exec"):
+            if state.settings.get("auto_exec") and state.settings.get("bot_enabled", True):
                 # Reset daily counters at UTC date change
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 if state.daily_date != today:
@@ -151,7 +153,7 @@ async def auto_exec_task():
 
 
 async def telegram_balance_task():
-    """Every 15 minutes, send Binance + Phantom balances to Telegram."""
+    """Every 15 minutes, send Binance + Phantom balances + bot status to Telegram."""
     while True:
         await asyncio.sleep(60)
         try:
@@ -166,7 +168,27 @@ async def telegram_balance_task():
 
             cex_bal = await _fetch_binance_balances()
             dex_bal = await _fetch_phantom_balances()
-            msg = format_balance_msg(cex_bal, dex_bal)
+
+            # Build status snapshot
+            total_profit = 0.0
+            total_trades = 0
+            try:
+                cur = db.trades.find({}, {"profit_usd": 1})
+                async for t in cur:
+                    total_trades += 1
+                    total_profit += float(t.get("profit_usd") or 0)
+            except Exception:
+                pass
+            status_snapshot = {
+                "paper_mode": state.settings.get("paper_mode", True),
+                "auto_exec": state.settings.get("auto_exec", False),
+                "bot_enabled": state.settings.get("bot_enabled", True),
+                "daily_pnl": state.daily_pnl,
+                "daily_trades": state.daily_trades,
+                "total_profit": round(total_profit, 4),
+                "total_trades": total_trades,
+            }
+            msg = format_balance_msg(cex_bal, dex_bal, prices=state.prices, status=status_snapshot)
             await send_telegram(tg_token, tg_chat, msg)
         except Exception as e:
             logger.exception(f"balance task: {e}")
@@ -249,7 +271,26 @@ async def _notify_trade(trade: dict):
     tg_token = _decrypt_cred("telegram_bot_token")
     tg_chat = _decrypt_cred("telegram_chat_id")
     if tg_token and tg_chat:
-        await send_telegram(tg_token, tg_chat, format_trade_msg(trade))
+        # Build lifetime totals snapshot for the message
+        try:
+            total_profit = 0.0
+            total_trades = 0
+            wins = 0
+            cur = db.trades.find({})
+            async for t in cur:
+                total_trades += 1
+                p = float(t.get("profit_usd", 0))
+                total_profit += p
+                if p > 0:
+                    wins += 1
+            totals = {
+                "total_profit": round(total_profit, 4),
+                "total_trades": total_trades,
+                "winrate": (wins / total_trades * 100.0) if total_trades else 0.0,
+            }
+        except Exception:
+            totals = None
+        await send_telegram(tg_token, tg_chat, format_trade_msg(trade, totals))
 
 
 # --------------- Lifespan ----------------
@@ -312,6 +353,7 @@ async def get_stats():
         "live_opportunities": live_opps,
         "mode": "paper" if state.settings.get("paper_mode") else "live",
         "auto_exec": bool(state.settings.get("auto_exec")),
+        "bot_enabled": bool(state.settings.get("bot_enabled", True)),
         "ws_connected": bool(state.ws_connected),
         "daily_pnl": round(state.daily_pnl, 4),
         "daily_trades": state.daily_trades,
@@ -361,6 +403,7 @@ async def get_settings():
         "enabled_coins": state.settings["enabled_coins"] if state.settings.get("enabled_coins") is not None else list(COIN_LIST),
         "daily_loss_limit_usd": state.settings.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": state.settings.get("max_daily_trades", 0),
+        "bot_enabled": state.settings.get("bot_enabled", True),
         "ws_connected": bool(state.ws_connected),
         "all_coins": list(COIN_LIST),
     }
@@ -385,7 +428,7 @@ async def update_settings(payload: SettingsIn):
     for f in (
         "paper_mode", "auto_exec", "trade_modal_usd",
         "threshold_pct", "slippage_pct", "enabled_coins",
-        "daily_loss_limit_usd", "max_daily_trades",
+        "daily_loss_limit_usd", "max_daily_trades", "bot_enabled",
     ):
         v = getattr(payload, f)
         if v is not None:
@@ -402,6 +445,8 @@ async def update_settings(payload: SettingsIn):
 
 @api.post("/execute")
 async def execute_manual(payload: ExecuteOpportunityIn):
+    if not state.settings.get("bot_enabled", True):
+        raise HTTPException(status_code=400, detail="Bot is OFF. Enable it from the dashboard before executing.")
     opp = next((o for o in state.opportunities if o["id"] == payload.opportunity_id), None)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found or expired")
@@ -445,6 +490,52 @@ async def test_telegram():
         raise HTTPException(status_code=400, detail="Telegram credentials not set")
     ok = await send_telegram(tg_token, tg_chat, "✅ *Test message* from Arbitrage Bot.")
     return {"sent": ok}
+
+
+@api.post("/test-balance-telegram")
+async def test_balance_telegram():
+    """Manually trigger a balance snapshot to Telegram (preview the 15-min message)."""
+    tg_token = _decrypt_cred("telegram_bot_token")
+    tg_chat = _decrypt_cred("telegram_chat_id")
+    if not tg_token or not tg_chat:
+        raise HTTPException(status_code=400, detail="Telegram credentials not set")
+
+    cex_bal = await _fetch_binance_balances()
+    dex_bal = await _fetch_phantom_balances()
+
+    total_profit = 0.0
+    total_trades = 0
+    try:
+        cur = db.trades.find({}, {"profit_usd": 1})
+        async for t in cur:
+            total_trades += 1
+            total_profit += float(t.get("profit_usd") or 0)
+    except Exception:
+        pass
+    status_snapshot = {
+        "paper_mode": state.settings.get("paper_mode", True),
+        "auto_exec": state.settings.get("auto_exec", False),
+        "bot_enabled": state.settings.get("bot_enabled", True),
+        "daily_pnl": state.daily_pnl,
+        "daily_trades": state.daily_trades,
+        "total_profit": round(total_profit, 4),
+        "total_trades": total_trades,
+    }
+    msg = format_balance_msg(cex_bal, dex_bal, prices=state.prices, status=status_snapshot)
+    ok = await send_telegram(tg_token, tg_chat, msg)
+    # Also reset the 15-min timer so the next periodic message lands 15 min from now
+    state.last_balance_notif = time.time()
+    return {"sent": ok, "cex_assets": len(cex_bal), "dex_assets": len(dex_bal)}
+
+
+@api.post("/reset-stats")
+async def reset_stats():
+    """Clear all trade history and reset in-memory daily counters."""
+    result = await db.trades.delete_many({})
+    state.daily_pnl = 0.0
+    state.daily_trades = 0
+    state.daily_date = ""
+    return {"deleted": result.deleted_count, "status": "ok"}
 
 
 @api.get("/coins")

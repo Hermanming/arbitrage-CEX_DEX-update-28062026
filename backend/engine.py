@@ -37,6 +37,7 @@ class EngineState:
             "enabled_coins": list(TOKENS.keys()),
             "daily_loss_limit_usd": 0.0,   # 0 = unlimited
             "max_daily_trades": 0,         # 0 = unlimited
+            "bot_enabled": True,           # master ON/OFF for execution
         }
         # encrypted credentials (raw encrypted strings, decrypted on use)
         self.creds: dict = {}

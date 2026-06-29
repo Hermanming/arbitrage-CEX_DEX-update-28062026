@@ -61,6 +61,7 @@ export default function Settings() {
   const [current, setCurrent] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testingBal, setTestingBal] = useState(false);
 
   const load = async () => {
     try {
@@ -134,6 +135,30 @@ export default function Settings() {
       toast.error("Telegram test failed: " + (e?.response?.data?.detail || e.message));
     } finally {
       setTesting(false);
+    }
+  };
+
+  const testBalance = async () => {
+    setTestingBal(true);
+    try {
+      const r = await api.testBalanceTelegram();
+      toast.success(`Balance snapshot sent · CEX:${r.cex_assets} DEX:${r.dex_assets}`);
+    } catch (e) {
+      toast.error("Balance test failed: " + (e?.response?.data?.detail || e.message));
+    } finally {
+      setTestingBal(false);
+    }
+  };
+
+  const resetStats = async () => {
+    if (!window.confirm("Reset ALL stats?\n\nThis will permanently delete all trade history and reset Total Profit, Total Trades, Winrate to zero. Cumulative chart will be cleared. This cannot be undone.")) {
+      return;
+    }
+    try {
+      const result = await api.resetStats();
+      toast.success(`Stats reset · ${result.deleted} trades cleared`);
+    } catch (e) {
+      toast.error("Reset failed: " + (e?.response?.data?.detail || e.message));
     }
   };
 
@@ -226,7 +251,7 @@ export default function Settings() {
                 style={{ borderRadius: 0 }}
               />
             </Field>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <button
                 type="button"
                 onClick={test}
@@ -236,6 +261,16 @@ export default function Settings() {
               >
                 <PaperPlaneTilt size={13} weight="bold" />
                 {testing ? "Sending…" : "Test Telegram"}
+              </button>
+              <button
+                type="button"
+                onClick={testBalance}
+                disabled={testingBal || !current.has_telegram}
+                data-testid="btn-test-balance-telegram"
+                className="inline-flex items-center gap-2 px-4 py-2 border border-[#00FF66] text-[#00FF66] font-mono text-xs uppercase tracking-[0.15em] hover:bg-[#00FF66] hover:text-black disabled:opacity-40"
+                title="Preview the 15-min balance snapshot that the bot sends automatically"
+              >
+                {testingBal ? "Sending…" : "Send Balance Now"}
               </button>
             </div>
           </div>
@@ -383,14 +418,22 @@ export default function Settings() {
           </div>
         </section>
 
-        <div className="flex items-center justify-end gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={resetStats}
+            data-testid="btn-reset-stats"
+            className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#FF3333] text-[#FF3333] font-mono text-xs uppercase tracking-[0.2em] hover:bg-[#FF3333] hover:text-black"
+          >
+            ⟲ Reset Stats (clear all trade history)
+          </button>
           <button
             type="submit"
             disabled={saving}
             data-testid={SETTINGS.formSettingsSave}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#00FF66] text-black font-mono text-xs uppercase tracking-[0.2em] hover:opacity-90 disabled:opacity-50"
           >
-            <FloppyDisk size={14} weight="bold" />
+            <FloppyDisk size={14} />
             {saving ? "Saving…" : "Save Configuration"}
           </button>
         </div>

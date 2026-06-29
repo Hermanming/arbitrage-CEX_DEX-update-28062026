@@ -16,5 +16,7 @@ export const api = {
   execute: (opportunity_id) =>
     http.post("/execute", { opportunity_id }).then((r) => r.data),
   testTelegram: () => http.post("/test-telegram").then((r) => r.data),
+  testBalanceTelegram: () => http.post("/test-balance-telegram").then((r) => r.data),
+  resetStats: () => http.post("/reset-stats").then((r) => r.data),
   coins: () => http.get("/coins").then((r) => r.data),
 };

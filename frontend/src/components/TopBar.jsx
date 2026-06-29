@@ -32,7 +32,7 @@ export default function TopBar() {
       const next = !settings[key];
       await api.saveSettings({ [key]: next });
       setSettings({ ...settings, [key]: next });
-      toast.success(`${key === "paper_mode" ? (next ? "PAPER" : "LIVE") : (next ? "AUTO" : "MANUAL")} mode activated`);
+      toast.success(`${key === "paper_mode" ? (next ? "PAPER" : "LIVE") : key === "auto_exec" ? (next ? "AUTO" : "MANUAL") : (next ? "BOT ON" : "BOT OFF")} mode activated`);
     } catch (e) {
       toast.error("Failed to update mode");
     }
@@ -86,6 +86,23 @@ export default function TopBar() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => toggle("bot_enabled")}
+            data-testid="nav-bot-onoff-switcher"
+            className="flex items-center border font-mono text-[10px] uppercase tracking-[0.18em]"
+            style={{ borderColor: settings.bot_enabled ? "#00FF66" : "#FF3333" }}
+            title="Master ON/OFF (scanner stays running)"
+          >
+            <span className={`px-2.5 py-1 ${settings.bot_enabled ? "bg-[#00FF66] text-black" : "text-[#475569]"}`}>
+              ON
+            </span>
+            <span className={`px-2.5 py-1 border-l ${!settings.bot_enabled ? "bg-[#FF3333] text-black" : "text-[#475569]"}`}
+              style={{ borderColor: settings.bot_enabled ? "#00FF66" : "#FF3333" }}>
+              OFF
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => toggle("paper_mode")}

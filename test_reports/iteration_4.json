@@ -1,0 +1,44 @@
+{
+  "summary": "Validated all 4 features end-to-end (bot_enabled master toggle, /api/execute gate, /api/reset-stats, telegram_balance_task + /api/test-balance-telegram + notifier formatters) via 10 pytest tests and a Playwright UI smoke. 10/10 backend tests pass; UI confirmed buttons render with correct testids and functionality works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Settings · Send Balance Now button",
+        "issues": ["Button is disabled (disabled={!current.has_telegram}) when no telegram creds — the review request specified the button should still be clickable and surface an error toast 'credentials not set' when clicked. Current behaviour shows a greyed-out non-clickable button instead. Backend already returns 400 with the right detail; either remove the disabled guard or add a tooltip explaining why it's disabled. Same pattern affects 'Test Telegram' button. MINOR UX deviation, not a blocker."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bot_toggle_and_balance.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "(Optional / Minor) Decide whether 'Send Balance Now' and 'Test Telegram' buttons should remain disabled without telegram creds or be clickable to surface the backend 400 error toast as the spec describes. Current implementation disables them; spec asked for clickable + error toast."
+  ],
+  "critical_code_review_comments": [
+    "server.py - both /api/reset-stats and /api/execute do not reset state.last_balance_notif; not a functional issue but worth noting.",
+    "server.py:155 telegram_balance_task starts with sleep(60) so first message lands 60s after boot, then gated by 15-min window via state.last_balance_notif. Logic is correct.",
+    "notifier.format_balance_msg correctly includes Bot status, Today PnL+Trades, Lifetime, per-asset USD valuation, and Grand Total. Verified via unit test.",
+    "format_trade_msg includes Profit USD, net_profit_pct, and lifetime totals (total_profit, total_trades, winrate). Verified via unit test.",
+    "TopBar.jsx nav-bot-onoff-switcher button correctly toggles via api.saveSettings({bot_enabled: !current}) and re-polls every 5s.",
+    "Settings.jsx resetStats() uses window.confirm — Playwright dialog handler confirmed it works end-to-end.",
+    "Backend logs show 'Background tasks started' on every boot and no balance task exceptions in the current process lifecycle.",
+    "Minor: pytest with xdist (parallel) caused interference on bot_enabled toggle test because settings are global mutable state. Tests pass cleanly under sequential run. Consider adding a settings-restore fixture if more tests touch global state."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bot_toggle_and_balance.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10 sequential)", "frontend": "100% (all 3 critical buttons working)"},
+  "test_credentials": "Not applicable — paper mode, no creds required",
+  "seed_data_creation": "Test executed an opportunity to create then wipe a trade via /api/reset-stats — no leftover data; reset returned status=ok",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 features (bot_enabled master toggle, /api/execute gate, /api/reset-stats, telegram balance snapshot path + /api/test-balance-telegram) work as designed. Single non-blocking UX deviation: 'Send Balance Now' button is disabled without telegram creds rather than clickable-with-error-toast. Backend tests are at /app/backend/tests/test_bot_toggle_and_balance.py — run with `-o addopts=` to disable xdist parallel because tests mutate global settings.",
+  "rca of the issue": "N/A — no functional bugs found"
+}

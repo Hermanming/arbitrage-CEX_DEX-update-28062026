@@ -62,6 +62,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testingBal, setTestingBal] = useState(false);
+  const [testingSummary, setTestingSummary] = useState(false);
 
   const load = async () => {
     try {
@@ -148,6 +149,34 @@ export default function Settings() {
     } finally {
       setTestingBal(false);
     }
+  };
+
+  const testDailySummary = async () => {
+    setTestingSummary(true);
+    try {
+      const r = await api.testDailySummary();
+      const s = r.summary || {};
+      toast.success(
+        `Summary sent · ${s.day_label || ""} · $${(s.total_profit ?? 0).toFixed(4)} over ${s.total_trades ?? 0} trades`
+      );
+    } catch (e) {
+      toast.error("Daily summary failed: " + (e?.response?.data?.detail || e.message));
+    } finally {
+      setTestingSummary(false);
+    }
+  };
+
+  const exportCsv = () => {
+    const url = api.exportTradesCsvUrl();
+    // Force download via temp anchor — bypasses pop-up blockers
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.target = "_self";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast.success("CSV download started");
   };
 
   const resetStats = async () => {
@@ -251,7 +280,7 @@ export default function Settings() {
                 style={{ borderRadius: 0 }}
               />
             </Field>
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={test}
@@ -271,6 +300,16 @@ export default function Settings() {
                 title="Preview the 15-min balance snapshot that the bot sends automatically"
               >
                 {testingBal ? "Sending…" : "Send Balance Now"}
+              </button>
+              <button
+                type="button"
+                onClick={testDailySummary}
+                disabled={testingSummary || !current.has_telegram}
+                data-testid="btn-test-daily-summary"
+                className="inline-flex items-center gap-2 px-4 py-2 border border-[#FFB020] text-[#FFB020] font-mono text-xs uppercase tracking-[0.15em] hover:bg-[#FFB020] hover:text-black disabled:opacity-40"
+                title="Preview the daily summary (auto-sent at 00:00 WIB / UTC+7 each day)"
+              >
+                {testingSummary ? "Sending…" : "Send Daily Summary"}
               </button>
             </div>
           </div>
@@ -419,14 +458,25 @@ export default function Settings() {
         </section>
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <button
-            type="button"
-            onClick={resetStats}
-            data-testid="btn-reset-stats"
-            className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#FF3333] text-[#FF3333] font-mono text-xs uppercase tracking-[0.2em] hover:bg-[#FF3333] hover:text-black"
-          >
-            ⟲ Reset Stats (clear all trade history)
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={resetStats}
+              data-testid="btn-reset-stats"
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#FF3333] text-[#FF3333] font-mono text-xs uppercase tracking-[0.2em] hover:bg-[#FF3333] hover:text-black"
+            >
+              ⟲ Reset Stats (clear all trade history)
+            </button>
+            <button
+              type="button"
+              onClick={exportCsv}
+              data-testid="btn-export-csv"
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#00D1FF] text-[#00D1FF] font-mono text-xs uppercase tracking-[0.2em] hover:bg-[#00D1FF] hover:text-black"
+              title="Download full trade history as CSV (for Excel / spreadsheet analysis)"
+            >
+              ⬇ Export Trades to CSV
+            </button>
+          </div>
           <button
             type="submit"
             disabled={saving}

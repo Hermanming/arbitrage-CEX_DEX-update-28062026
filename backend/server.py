@@ -1,15 +1,19 @@
 """FastAPI server for CEX-DEX Arbitrage Bot."""
 import asyncio
+import csv
+import io
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -26,7 +30,14 @@ from engine import (
     price_polling_task,
     state,
 )
-from notifier import format_balance_msg, format_trade_msg, send_telegram
+from notifier import (
+    format_balance_msg,
+    format_daily_summary_msg,
+    format_trade_msg,
+    send_telegram,
+)
+
+WIB = ZoneInfo("Asia/Jakarta")  # UTC+7
 
 logging.basicConfig(
     level=logging.INFO,
@@ -267,6 +278,103 @@ async def _fetch_phantom_balances() -> dict[str, float]:
         return {}
 
 
+async def _compute_daily_summary(target_wib_date: Optional[str] = None) -> dict:
+    """Aggregate trades for a single WIB day.
+
+    target_wib_date: 'YYYY-MM-DD'. Defaults to *yesterday* in WIB (the day that just ended at 00:00 WIB).
+    """
+    now_wib = datetime.now(WIB)
+    if target_wib_date:
+        day_start_wib = datetime.strptime(target_wib_date, "%Y-%m-%d").replace(tzinfo=WIB)
+    else:
+        # Day that just ended = yesterday (WIB)
+        today_wib = now_wib.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start_wib = today_wib - timedelta(days=1)
+    day_end_wib = day_start_wib + timedelta(days=1)
+    start_utc_iso = day_start_wib.astimezone(timezone.utc).isoformat()
+    end_utc_iso = day_end_wib.astimezone(timezone.utc).isoformat()
+
+    total_profit = 0.0
+    wins = 0
+    losses = 0
+    total_trades = 0
+    per_coin: dict[str, dict] = {}
+
+    cur = db.trades.find(
+        {"ts": {"$gte": start_utc_iso, "$lt": end_utc_iso}},
+        {"coin": 1, "profit_usd": 1},
+    )
+    async for t in cur:
+        total_trades += 1
+        p = float(t.get("profit_usd") or 0)
+        total_profit += p
+        if p > 0:
+            wins += 1
+        elif p < 0:
+            losses += 1
+        coin = t.get("coin") or "?"
+        rec = per_coin.setdefault(coin, {"coin": coin, "profit": 0.0, "trades": 0})
+        rec["profit"] += p
+        rec["trades"] += 1
+
+    winrate = (wins / total_trades * 100.0) if total_trades else 0.0
+    best = max(per_coin.values(), key=lambda x: x["profit"], default=None)
+    worst = min(per_coin.values(), key=lambda x: x["profit"], default=None)
+
+    return {
+        "day_label": day_start_wib.strftime("%Y-%m-%d (%a)"),
+        "wib_date": day_start_wib.strftime("%Y-%m-%d"),
+        "total_profit": round(total_profit, 4),
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "winrate": round(winrate, 2),
+        "best_coin": (
+            {"coin": best["coin"], "profit": round(best["profit"], 4), "trades": best["trades"]}
+            if best
+            else {}
+        ),
+        "worst_coin": (
+            {"coin": worst["coin"], "profit": round(worst["profit"], 4), "trades": worst["trades"]}
+            if worst
+            else {}
+        ),
+        "per_coin": [
+            {"coin": v["coin"], "profit": round(v["profit"], 4), "trades": v["trades"]}
+            for v in sorted(per_coin.values(), key=lambda x: x["profit"], reverse=True)
+        ],
+    }
+
+
+async def daily_summary_task():
+    """At 00:00 WIB (UTC+7) every day, send the previous-day summary to Telegram once."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            now_wib = datetime.now(WIB)
+            # Fire shortly after midnight WIB; guard with state.last_daily_summary_date
+            wib_today_str = now_wib.strftime("%Y-%m-%d")
+            if not (now_wib.hour == 0 and now_wib.minute < 10):
+                continue
+            if state.last_daily_summary_date == wib_today_str:
+                continue
+            tg_token = _decrypt_cred("telegram_bot_token")
+            tg_chat = _decrypt_cred("telegram_chat_id")
+            if not tg_token or not tg_chat:
+                # No telegram configured — still mark date so we don't retry every 30s today
+                state.last_daily_summary_date = wib_today_str
+                continue
+
+            summary = await _compute_daily_summary()  # defaults to yesterday WIB
+            msg = format_daily_summary_msg(summary)
+            sent = await send_telegram(tg_token, tg_chat, msg)
+            if sent:
+                state.last_daily_summary_date = wib_today_str
+                logger.info(f"Daily summary sent for {summary['wib_date']}")
+        except Exception as e:
+            logger.exception(f"daily_summary_task: {e}")
+
+
 async def _notify_trade(trade: dict):
     tg_token = _decrypt_cred("telegram_bot_token")
     tg_chat = _decrypt_cred("telegram_chat_id")
@@ -302,6 +410,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(binance_ws_task()),
         asyncio.create_task(auto_exec_task()),
         asyncio.create_task(telegram_balance_task()),
+        asyncio.create_task(daily_summary_task()),
     ]
     logger.info("Background tasks started")
     try:
@@ -526,6 +635,55 @@ async def test_balance_telegram():
     # Also reset the 15-min timer so the next periodic message lands 15 min from now
     state.last_balance_notif = time.time()
     return {"sent": ok, "cex_assets": len(cex_bal), "dex_assets": len(dex_bal)}
+
+
+@api.get("/daily-summary")
+async def get_daily_summary(date: Optional[str] = None):
+    """Get the WIB daily summary. If no `date` (YYYY-MM-DD) provided, returns yesterday WIB."""
+    if date:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    return await _compute_daily_summary(date)
+
+
+@api.post("/test-daily-summary")
+async def test_daily_summary(date: Optional[str] = None):
+    """Send a daily summary to Telegram on demand. Defaults to yesterday WIB."""
+    tg_token = _decrypt_cred("telegram_bot_token")
+    tg_chat = _decrypt_cred("telegram_chat_id")
+    if not tg_token or not tg_chat:
+        raise HTTPException(status_code=400, detail="Telegram credentials not set")
+    summary = await _compute_daily_summary(date)
+    msg = format_daily_summary_msg(summary)
+    sent = await send_telegram(tg_token, tg_chat, msg)
+    return {"sent": sent, "summary": summary}
+
+
+@api.get("/export-trades-csv")
+async def export_trades_csv():
+    """Stream the full trade history as a CSV file."""
+    columns = [
+        "ts", "coin", "mode", "buy_side", "sell_side",
+        "buy_price", "sell_price", "modal_usd", "spread_pct",
+        "net_profit_pct", "profit_usd", "status", "trigger",
+        "binance_order_id", "error", "id",
+    ]
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    cur = db.trades.find({}, {"_id": 0}).sort("ts", -1)
+    async for t in cur:
+        row = {k: t.get(k, "") for k in columns}
+        writer.writerow(row)
+    buf.seek(0)
+    filename = f"arb-trades-{datetime.now(WIB).strftime('%Y%m%d-%H%M')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @api.post("/reset-stats")

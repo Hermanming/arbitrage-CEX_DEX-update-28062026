@@ -43,6 +43,7 @@ class EngineState:
         self.creds: dict = {}
         # stats
         self.last_balance_notif: float = 0.0
+        self.last_daily_summary_date: str = ""  # WIB date string YYYY-MM-DD of last daily summary sent
         # WebSocket status indicator
         self.ws_connected: bool = False
         # daily counters (reset by date string)

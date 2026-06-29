@@ -80,6 +80,45 @@ def _format_balance_lines(balances: dict, prices: dict | None, source: str) -> t
     return lines, total_usd
 
 
+def format_daily_summary_msg(summary: dict) -> str:
+    """Format the end-of-day Telegram summary (WIB day just ended)."""
+    total_profit = float(summary.get("total_profit") or 0.0)
+    total_trades = int(summary.get("total_trades") or 0)
+    winrate = float(summary.get("winrate") or 0.0)
+    wins = int(summary.get("wins") or 0)
+    losses = int(summary.get("losses") or 0)
+    best = summary.get("best_coin") or {}
+    worst = summary.get("worst_coin") or {}
+    day_label = summary.get("day_label", "")
+    avg_profit = (total_profit / total_trades) if total_trades else 0.0
+
+    pnl_emoji = "🟢" if total_profit >= 0 else "🔴"
+    parts = [
+        f"📅 *Daily Summary* — `{day_label}` (WIB)",
+        "",
+        f"{pnl_emoji} *Net P&L:* `${total_profit:,.4f}`",
+        f"*Trades:* `{total_trades}` total · ✅ `{wins}` wins · ❌ `{losses}` losses",
+        f"*Winrate:* `{winrate:.2f}%`",
+        f"*Avg / Trade:* `${avg_profit:,.4f}`",
+    ]
+
+    if best.get("coin"):
+        parts.append(
+            f"\n🏆 *Best Coin:* `{best['coin']}` → `${float(best['profit']):,.4f}` "
+            f"over `{int(best.get('trades') or 0)}` trades"
+        )
+    if worst.get("coin") and worst.get("coin") != best.get("coin"):
+        parts.append(
+            f"💀 *Worst Coin:* `{worst['coin']}` → `${float(worst['profit']):,.4f}` "
+            f"over `{int(worst.get('trades') or 0)}` trades"
+        )
+
+    if total_trades == 0:
+        parts.append("\n_No trades executed today._")
+
+    return "\n".join(parts)
+
+
 def format_balance_msg(
     cex_balances: dict,
     dex_balances: dict,

@@ -17,6 +17,11 @@ export const api = {
     http.post("/execute", { opportunity_id }).then((r) => r.data),
   testTelegram: () => http.post("/test-telegram").then((r) => r.data),
   testBalanceTelegram: () => http.post("/test-balance-telegram").then((r) => r.data),
+  testDailySummary: (date) =>
+    http.post("/test-daily-summary", null, { params: date ? { date } : {} }).then((r) => r.data),
+  dailySummary: (date) =>
+    http.get("/daily-summary", { params: date ? { date } : {} }).then((r) => r.data),
+  exportTradesCsvUrl: () => `${API}/export-trades-csv`,
   resetStats: () => http.post("/reset-stats").then((r) => r.data),
   coins: () => http.get("/coins").then((r) => r.data),
 };

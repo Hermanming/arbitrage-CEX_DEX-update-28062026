@@ -45,6 +45,9 @@ class EngineState:
         self.last_balance_notif: float = 0.0
         self.last_daily_summary_date: str = ""  # WIB date string YYYY-MM-DD of last daily summary sent
         self.last_opp_log_ts: dict[str, float] = {}  # coin -> last opportunity-log timestamp (throttle)
+        # Inventory baseline & drift monitoring
+        self.inventory_baseline: dict = {}  # {coin: {cex_qty, dex_qty, total_qty, baseline_ts}}
+        self.last_drift_alert_ts: dict[str, float] = {}  # coin -> ts last drift alert sent (throttle 1h)
         # WebSocket status indicator
         self.ws_connected: bool = False
         # daily counters (reset by date string)
@@ -250,7 +253,13 @@ async def execute_trade_simulation(opp: dict) -> dict:
 
 
 async def execute_trade_live(opp: dict, binance_key: str, binance_secret: str, phantom_key: str) -> dict:
-    """Live trade: execute on CEX & DEX with pre-positioned balances (parallel hedge)."""
+    """Live trade: execute on CEX & DEX with pre-positioned balances (parallel hedge).
+
+    On Jupiter swap failure: retries up to 3 times with exponential backoff (0s, 2s, 5s).
+    If all retries fail and settings.auto_reverse_on_partial is True, the CEX leg is
+    automatically reversed (sell what we just bought, or buy back what we just sold) to
+    flatten the position. Otherwise the trade is marked 'partial' for manual handling.
+    """
     from binance.client import Client as BinanceClient
     modal = state.settings.get("trade_modal_usd", 100.0)
     coin = opp["coin"]
@@ -271,35 +280,80 @@ async def execute_trade_live(opp: dict, binance_key: str, binance_secret: str, p
         "status": "filled",
         "ts": datetime.now(timezone.utc).isoformat(),
         "error": None,
+        "jupiter_attempts": 0,
+        "reversed_cex": False,
     }
 
+    client = BinanceClient(binance_key, binance_secret)
+
+    # ── CEX leg ──────────────────────────────────────────────────────
+    cex_side = "BUY" if opp["buy_side"] == "CEX" else "SELL"
     try:
-        # CEX leg via python-binance: BUY or SELL on Binance spot
-        side = "BUY" if opp["buy_side"] == "CEX" else "SELL"
-        client = BinanceClient(binance_key, binance_secret)
-        # quoteOrderQty allows USDT-based market orders
         order = client.create_order(
             symbol=symbol,
-            side=side,
+            side=cex_side,
             type="MARKET",
             quoteOrderQty=modal,
         )
         trade["binance_order_id"] = order.get("orderId")
-        trade["status"] = "filled"
+        # Capture executed quantity for potential reverse
+        executed_qty = float(order.get("executedQty") or 0)
+        trade["executed_qty"] = executed_qty
     except Exception as e:
         logger.exception(f"Binance live trade failed: {e}")
         trade["status"] = "failed"
         trade["error"] = f"binance: {e}"
         return trade
 
-    # DEX leg via Jupiter swap (best-effort; non-fatal on failure)
-    try:
-        await jupiter_swap(opp, phantom_key, modal)
-        trade["status"] = "filled"
-    except Exception as e:
-        logger.exception(f"Jupiter swap failed: {e}")
-        trade["status"] = "partial"
-        trade["error"] = f"jupiter: {e}"
+    # ── DEX leg with retry ───────────────────────────────────────────
+    backoffs = [0.0, 2.0, 5.0]  # 3 attempts total
+    last_err: Exception | None = None
+    for attempt_idx, sleep_s in enumerate(backoffs, start=1):
+        if sleep_s > 0:
+            await asyncio.sleep(sleep_s)
+        trade["jupiter_attempts"] = attempt_idx
+        try:
+            await jupiter_swap(opp, phantom_key, modal)
+            trade["status"] = "filled"
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Jupiter swap attempt {attempt_idx}/3 failed for {coin}: {e}")
+
+    if last_err is not None:
+        # All Jupiter retries failed → handle unhedged CEX position
+        trade["error"] = f"jupiter (after {trade['jupiter_attempts']} retries): {last_err}"
+        if state.settings.get("auto_reverse_on_partial", False) and trade.get("executed_qty"):
+            # Reverse the CEX leg to flatten exposure
+            reverse_side = "SELL" if cex_side == "BUY" else "BUY"
+            try:
+                if reverse_side == "SELL":
+                    # We just bought X coin → sell X coin back
+                    rev_order = client.create_order(
+                        symbol=symbol,
+                        side=reverse_side,
+                        type="MARKET",
+                        quantity=trade["executed_qty"],
+                    )
+                else:
+                    # We just sold X coin → buy ~modal USDT worth back
+                    rev_order = client.create_order(
+                        symbol=symbol,
+                        side=reverse_side,
+                        type="MARKET",
+                        quoteOrderQty=modal,
+                    )
+                trade["status"] = "reversed"
+                trade["reversed_cex"] = True
+                trade["reverse_order_id"] = rev_order.get("orderId")
+                trade["error"] = f"jupiter failed × {trade['jupiter_attempts']}, CEX auto-reversed. Original: {last_err}"
+            except Exception as rev_e:
+                logger.exception(f"CEX auto-reverse failed: {rev_e}")
+                trade["status"] = "partial"
+                trade["error"] = f"jupiter failed + reverse failed: {rev_e}. Original: {last_err}"
+        else:
+            trade["status"] = "partial"
 
     return trade
 

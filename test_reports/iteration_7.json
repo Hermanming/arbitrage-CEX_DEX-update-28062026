@@ -1,0 +1,43 @@
+{
+  "summary": "Defensive trading features (pre-flight balance check, inventory drift monitor, Jupiter retry + auto-reverse) tested end-to-end. 15/15 pytest cases passed (settings persistence, /api/inventory-baseline/reset, /api/inventory-drift, _compute_drift math, _preflight_balance_check across 5 scenarios, drift+partial alert formatters, Jupiter retry source-code inspection). Frontend Settings page: all 3 new data-testids render, Save Configuration persists drift_alert_pct + auto_reverse_on_partial, Reset Inventory Baseline triggers window.confirm and shows success toast.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Settings · Risk Caps · Drift Alert Threshold input",
+        "issues": [
+          "input-drift-alert-pct uses step=\"0.5\" which makes intermediate values like 8.25 fail HTML5 validation (browser blocks submission with 'two nearest valid values are 8 and 8.5'). If finer granularity is desired, lower step (e.g. 0.1) or remove. Currently functional with 0.5 steps."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_defensive_features.py",
+    "/app/test_reports/pytest/iteration7_results.xml"
+  ],
+  "action_items": [
+    "Optional: relax drift_alert_pct input step from 0.5 to 0.1 if users need fractional control beyond half-percent increments."
+  ],
+  "critical_code_review_comments": [
+    "engine.execute_trade_live retry loop is correct: 3 attempts with backoffs [0.0, 2.0, 5.0]; jupiter_attempts counter increments before each attempt; auto-reverse path is gated on settings.auto_reverse_on_partial AND executed_qty present; on reverse failure the status falls back to 'partial' with combined error message — good defensive design.",
+    "_preflight_balance_check fail-open behavior (returns ok=True, 'preflight-skipped' when both balance dicts are empty) preserves backwards compatibility but means a transient Binance/Phantom API outage will NOT block trades. Consider adding a settings flag (e.g. require_preflight=False default) to opt into strict mode.",
+    "inventory_drift_task sleeps 300s BEFORE first run — first drift check happens 5 min after server start. Acceptable but consider running once after startup so users see immediate drift on /api/inventory-drift after baseline reset.",
+    "auto_exec_task uses last_fired throttle of 30s per coin, while opportunity_logger throttles at 30s too — consistent. Note that auto_exec preflight skip is silently logged (continue) without persisting the skip reason — operators may want a 'preflight_skips' counter for visibility.",
+    "format_partial_trade_alert_msg correctly truncates error to 300 chars; status string is uppercased; reversed_cex emoji branches verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_defensive_features.py"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (3/3 testids + save + dialog flow)"},
+  "test_credentials": "N/A — all tests run in paper mode without real API keys.",
+  "seed_data_creation": "Tests temporarily set drift_alert_pct=7.5 / 8.5 then revert to 5.0 and auto_reverse_on_partial=False. No persistent test data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Defensive trading hardening (iteration 7) is fully verified. The Jupiter retry loop was validated via source inspection (cannot exercise live without keys, by design). Pre-flight check tested in 5 scenarios via monkeypatch of _fetch_binance_balances/_fetch_phantom_balances. All previous iteration suites (test_bot_toggle_and_balance.py, test_daily_summary_and_csv.py, test_opp_log_and_backtest.py, test_p1p2_enhancements.py) are still present and were not re-run this iteration — re-run them if regression coverage is needed.",
+  "rca of the issue": "No bugs found this iteration."
+}

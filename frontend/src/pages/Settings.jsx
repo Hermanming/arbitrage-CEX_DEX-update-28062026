@@ -57,12 +57,15 @@ export default function Settings() {
     enabled_coins: [],
     daily_loss_limit_usd: 0,
     max_daily_trades: 0,
+    auto_reverse_on_partial: false,
+    drift_alert_pct: 5.0,
   });
   const [current, setCurrent] = useState({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testingBal, setTestingBal] = useState(false);
   const [testingSummary, setTestingSummary] = useState(false);
+  const [resettingBaseline, setResettingBaseline] = useState(false);
 
   const load = async () => {
     try {
@@ -79,6 +82,8 @@ export default function Settings() {
         enabled_coins: data.enabled_coins ?? data.all_coins ?? [],
         daily_loss_limit_usd: data.daily_loss_limit_usd ?? 0,
         max_daily_trades: data.max_daily_trades ?? 0,
+        auto_reverse_on_partial: data.auto_reverse_on_partial ?? false,
+        drift_alert_pct: data.drift_alert_pct ?? 5.0,
       }));
     } catch (e) {
       toast.error("Could not load settings");
@@ -103,6 +108,8 @@ export default function Settings() {
         enabled_coins: s.enabled_coins,
         daily_loss_limit_usd: parseFloat(s.daily_loss_limit_usd) || 0,
         max_daily_trades: parseInt(s.max_daily_trades) || 0,
+        auto_reverse_on_partial: !!s.auto_reverse_on_partial,
+        drift_alert_pct: parseFloat(s.drift_alert_pct) || 5.0,
       };
       if (s.binance_api_key) payload.binance_api_key = s.binance_api_key;
       if (s.binance_api_secret) payload.binance_api_secret = s.binance_api_secret;
@@ -177,6 +184,20 @@ export default function Settings() {
     a.click();
     a.remove();
     toast.success("CSV download started");
+  };
+
+  const resetBaseline = async () => {
+    if (!window.confirm("Snapshot current Binance + Phantom balances as the new inventory baseline?\n\nGunakan ini SETELAH pre-position semua coin, atau setelah rebalance manual."))
+      return;
+    setResettingBaseline(true);
+    try {
+      const r = await api.resetInventoryBaseline();
+      toast.success(`Baseline set · ${r.coins} coins tracked`);
+    } catch (e) {
+      toast.error("Reset baseline gagal: " + (e?.response?.data?.detail || e.message));
+    } finally {
+      setResettingBaseline(false);
+    }
   };
 
   const resetStats = async () => {
@@ -409,6 +430,33 @@ export default function Settings() {
                 style={{ borderRadius: 0 }}
               />
             </Field>
+            <Field label="Drift Alert Threshold (%)" hint="Telegram alert when total coin qty drifts >X% from baseline. Default 5%.">
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={s.drift_alert_pct}
+                onChange={setField("drift_alert_pct")}
+                data-testid="input-drift-alert-pct"
+                className="w-full px-3 py-2 font-mono text-sm border border-[#1E2229]"
+                style={{ borderRadius: 0 }}
+              />
+            </Field>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!s.auto_reverse_on_partial}
+                onChange={(e) => setS((p) => ({ ...p, auto_reverse_on_partial: e.target.checked }))}
+                data-testid="toggle-auto-reverse"
+                className="w-4 h-4 accent-[#FFB020]"
+              />
+              <div>
+                <div className="text-xs font-mono uppercase tracking-[0.18em]">Auto-Reverse on Partial</div>
+                <div className="text-[10px] text-[#475569] font-mono">
+                  If Jupiter swap fails 3x in live trade, auto-sell what was just bought on CEX to flatten exposure
+                </div>
+              </div>
+            </label>
           </div>
         </section>
 
@@ -475,6 +523,16 @@ export default function Settings() {
               title="Download full trade history as CSV (for Excel / spreadsheet analysis)"
             >
               ⬇ Export Trades to CSV
+            </button>
+            <button
+              type="button"
+              onClick={resetBaseline}
+              disabled={resettingBaseline}
+              data-testid="btn-reset-baseline"
+              className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#FFB020] text-[#FFB020] font-mono text-xs uppercase tracking-[0.2em] hover:bg-[#FFB020] hover:text-black disabled:opacity-40"
+              title="Snapshot current Binance + Phantom balances as the drift baseline"
+            >
+              {resettingBaseline ? "Setting…" : "📍 Reset Inventory Baseline"}
             </button>
           </div>
           <button

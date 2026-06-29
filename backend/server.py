@@ -34,6 +34,8 @@ from engine import (
 from notifier import (
     format_balance_msg,
     format_daily_summary_msg,
+    format_drift_alert_msg,
+    format_partial_trade_alert_msg,
     format_trade_msg,
     send_telegram,
 )
@@ -69,6 +71,8 @@ class SettingsIn(BaseModel):
     daily_loss_limit_usd: Optional[float] = None
     max_daily_trades: Optional[int] = None
     bot_enabled: Optional[bool] = None
+    auto_reverse_on_partial: Optional[bool] = None
+    drift_alert_pct: Optional[float] = None
 
 
 class ExecuteOpportunityIn(BaseModel):
@@ -90,6 +94,8 @@ async def load_settings_into_state():
         "daily_loss_limit_usd": doc.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": doc.get("max_daily_trades", 0),
         "bot_enabled": doc.get("bot_enabled", True),
+        "auto_reverse_on_partial": doc.get("auto_reverse_on_partial", False),
+        "drift_alert_pct": float(doc.get("drift_alert_pct") or 5.0),
     })
     state.creds = {
         "binance_api_key": doc.get("binance_api_key", ""),
@@ -100,6 +106,8 @@ async def load_settings_into_state():
     }
     # Persisted daily-summary de-dup marker (survives restart)
     state.last_daily_summary_date = doc.get("last_daily_summary_date", "")
+    # Persisted inventory baseline (survives restart)
+    state.inventory_baseline = doc.get("inventory_baseline", {}) or {}
 
 
 def _decrypt_cred(name: str) -> str:
@@ -147,6 +155,11 @@ async def auto_exec_task():
                         if paper:
                             trade = await execute_trade_simulation(opp)
                         else:
+                            modal_now = float(state.settings.get("trade_modal_usd") or 0)
+                            ok, reason = await _preflight_balance_check(opp, modal_now)
+                            if not ok:
+                                logger.warning(f"auto-exec preflight skip {coin}: {reason}")
+                                continue
                             trade = await execute_trade_live(
                                 opp,
                                 _decrypt_cred("binance_api_key"),
@@ -156,6 +169,9 @@ async def auto_exec_task():
                         trade["trigger"] = "auto"
                         await db.trades.insert_one({**trade, "_id": trade["id"]})
                         await _notify_trade(trade)
+                        # Alert if partial/reversed (live mode only)
+                        if trade.get("status") in ("partial", "reversed"):
+                            await _notify_partial(trade)
                         # update daily counters
                         state.daily_trades += 1
                         state.daily_pnl += float(trade.get("profit_usd") or 0)
@@ -206,6 +222,138 @@ async def opportunity_logger_task():
                     pass
         except Exception as e:
             logger.exception(f"opportunity_logger_task: {e}")
+
+
+async def _preflight_balance_check(opp: dict, modal: float) -> tuple[bool, str]:
+    """Verify we have enough balance on both CEX and DEX to execute the trade.
+
+    Returns (ok, reason). If ok=False, the caller should skip execution.
+    Skips check if Binance API key or Phantom private key are not configured.
+    """
+    coin = opp["coin"]
+    buy_side = opp["buy_side"]  # "CEX" or "DEX"
+    cex_price = float(opp.get("cex_price") or 0)
+    dex_price = float(opp.get("dex_price") or 0)
+    if cex_price <= 0 or dex_price <= 0:
+        return True, ""  # Cannot validate without prices; let downstream decide
+
+    cex_bal = await _fetch_binance_balances()
+    dex_bal = await _fetch_phantom_balances()
+    if not cex_bal and not dex_bal:
+        # API keys missing or balance fetch failed → don't block (preserves prior behavior)
+        return True, "preflight-skipped"
+
+    # Required amounts on each side (USD-equivalent semantics):
+    if buy_side == "CEX":
+        # CEX BUY: need USDT >= modal
+        usdt_have = float(cex_bal.get("USDT") or 0)
+        if usdt_have + 0.01 < modal:
+            return False, f"insufficient USDT on Binance: have ${usdt_have:.2f}, need ${modal:.2f}"
+        # DEX SELL: need coin >= modal/dex_price
+        coin_needed = modal / dex_price
+        coin_have = float(dex_bal.get(coin) or 0)
+        if coin_have * 0.999 < coin_needed:
+            return False, f"insufficient {coin} on Phantom: have {coin_have:.6f}, need {coin_needed:.6f}"
+    else:  # buy_side == "DEX"
+        # DEX BUY: need USDC >= modal
+        usdc_have = float(dex_bal.get("USDC") or 0)
+        if usdc_have + 0.01 < modal:
+            return False, f"insufficient USDC on Phantom: have ${usdc_have:.2f}, need ${modal:.2f}"
+        # CEX SELL: need coin >= modal/cex_price
+        coin_needed = modal / cex_price
+        coin_have = float(cex_bal.get(coin) or 0)
+        if coin_have * 0.999 < coin_needed:
+            return False, f"insufficient {coin} on Binance: have {coin_have:.6f}, need {coin_needed:.6f}"
+
+    # Gas check: need at least 0.005 SOL on Phantom for swap fees
+    sol_have = float(dex_bal.get("SOL") or 0)
+    if sol_have < 0.005 and coin != "SOL":
+        return False, f"insufficient SOL gas on Phantom: have {sol_have:.4f}, need >= 0.005"
+
+    return True, ""
+
+
+async def _compute_inventory_snapshot() -> dict:
+    """Return current inventory per coin: {coin: {cex_qty, dex_qty, total_qty, ts}}."""
+    cex_bal = await _fetch_binance_balances()
+    dex_bal = await _fetch_phantom_balances()
+    snapshot = {}
+    coins_seen = set(cex_bal.keys()) | set(dex_bal.keys())
+    coins_seen.discard("USDT")
+    coins_seen.discard("USDC")
+    for coin in coins_seen:
+        cex_qty = float(cex_bal.get(coin) or 0)
+        dex_qty = float(dex_bal.get(coin) or 0)
+        snapshot[coin] = {
+            "cex_qty": round(cex_qty, 6),
+            "dex_qty": round(dex_qty, 6),
+            "total_qty": round(cex_qty + dex_qty, 6),
+        }
+    return snapshot
+
+
+def _compute_drift(coin: str, current: dict, baseline: dict) -> dict:
+    """Compute drift metrics for one coin.
+
+    Returns dict with:
+      - drift_pct: % change in total inventory from baseline (signed)
+      - imbalance_pct: % imbalance between CEX and DEX sides (positive)
+      - baseline_total, current_total
+    """
+    b_total = float(baseline.get("total_qty") or 0)
+    c_total = float(current.get("total_qty") or 0)
+    drift_pct = ((c_total - b_total) / b_total * 100.0) if b_total > 0 else 0.0
+    c_cex = float(current.get("cex_qty") or 0)
+    c_dex = float(current.get("dex_qty") or 0)
+    side_sum = c_cex + c_dex
+    imbalance_pct = (abs(c_cex - c_dex) / side_sum * 100.0) if side_sum > 0 else 0.0
+    return {
+        "drift_pct": round(drift_pct, 4),
+        "imbalance_pct": round(imbalance_pct, 4),
+        "baseline_total": b_total,
+        "current_total": c_total,
+        "current_cex": c_cex,
+        "current_dex": c_dex,
+    }
+
+
+async def inventory_drift_task():
+    """Every 5 minutes, compute inventory drift per coin and alert Telegram if exceeded.
+
+    Throttle: 1 alert per coin per hour to avoid spam.
+    Skips coins without a baseline (user must call /api/inventory-baseline/reset once).
+    """
+    while True:
+        await asyncio.sleep(300)  # 5 min
+        try:
+            if not state.inventory_baseline:
+                continue
+            tg_token = _decrypt_cred("telegram_bot_token")
+            tg_chat = _decrypt_cred("telegram_chat_id")
+            drift_threshold = float(state.settings.get("drift_alert_pct") or 5.0)
+            imbalance_threshold = 40.0
+            snapshot = await _compute_inventory_snapshot()
+            if not snapshot:
+                continue
+            now_epoch = time.time()
+            for coin, current in snapshot.items():
+                baseline = state.inventory_baseline.get(coin)
+                if not baseline:
+                    continue
+                m = _compute_drift(coin, current, baseline)
+                trigger_drift = abs(m["drift_pct"]) > drift_threshold
+                trigger_imb = m["imbalance_pct"] > imbalance_threshold and m["current_total"] > 0
+                if not (trigger_drift or trigger_imb):
+                    continue
+                if now_epoch - state.last_drift_alert_ts.get(coin, 0) < 3600:
+                    continue  # throttle 1h per coin
+                state.last_drift_alert_ts[coin] = now_epoch
+                if tg_token and tg_chat:
+                    msg = format_drift_alert_msg(coin, m, drift_threshold, imbalance_threshold)
+                    await send_telegram(tg_token, tg_chat, msg)
+                logger.warning(f"Inventory drift alert: {coin} drift={m['drift_pct']}% imb={m['imbalance_pct']}%")
+        except Exception as e:
+            logger.exception(f"inventory_drift_task: {e}")
 
 
 async def telegram_balance_task():
@@ -432,27 +580,42 @@ async def daily_summary_task():
 async def _notify_trade(trade: dict):
     tg_token = _decrypt_cred("telegram_bot_token")
     tg_chat = _decrypt_cred("telegram_chat_id")
-    if tg_token and tg_chat:
-        # Build lifetime totals snapshot for the message
-        try:
-            total_profit = 0.0
-            total_trades = 0
-            wins = 0
-            cur = db.trades.find({})
-            async for t in cur:
-                total_trades += 1
-                p = float(t.get("profit_usd", 0))
-                total_profit += p
-                if p > 0:
-                    wins += 1
-            totals = {
-                "total_profit": round(total_profit, 4),
-                "total_trades": total_trades,
-                "winrate": (wins / total_trades * 100.0) if total_trades else 0.0,
-            }
-        except Exception:
-            totals = None
-        await send_telegram(tg_token, tg_chat, format_trade_msg(trade, totals))
+    if not tg_token or not tg_chat:
+        return
+    try:
+        # Aggregate lifetime totals for the message
+        total_profit = 0.0
+        total_trades = 0
+        wins = 0
+        cur = db.trades.find({}, {"profit_usd": 1})
+        async for t in cur:
+            total_trades += 1
+            p = float(t.get("profit_usd") or 0)
+            total_profit += p
+            if p > 0:
+                wins += 1
+        winrate = (wins / total_trades * 100.0) if total_trades else 0.0
+        msg = format_trade_msg(trade, {
+            "total_profit": round(total_profit, 4),
+            "total_trades": total_trades,
+            "winrate": round(winrate, 2),
+        })
+        await send_telegram(tg_token, tg_chat, msg)
+    except Exception as e:
+        logger.warning(f"notify_trade fail: {e}")
+
+
+async def _notify_partial(trade: dict):
+    """Send urgent Telegram alert for partial/reversed trades."""
+    tg_token = _decrypt_cred("telegram_bot_token")
+    tg_chat = _decrypt_cred("telegram_chat_id")
+    if not tg_token or not tg_chat:
+        return
+    try:
+        msg = format_partial_trade_alert_msg(trade)
+        await send_telegram(tg_token, tg_chat, msg)
+    except Exception as e:
+        logger.warning(f"notify_partial fail: {e}")
 
 
 # --------------- Lifespan ----------------
@@ -466,6 +629,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(telegram_balance_task()),
         asyncio.create_task(daily_summary_task()),
         asyncio.create_task(opportunity_logger_task()),
+        asyncio.create_task(inventory_drift_task()),
     ]
     logger.info("Background tasks started")
     try:
@@ -568,6 +732,8 @@ async def get_settings():
         "daily_loss_limit_usd": state.settings.get("daily_loss_limit_usd", 0.0),
         "max_daily_trades": state.settings.get("max_daily_trades", 0),
         "bot_enabled": state.settings.get("bot_enabled", True),
+        "auto_reverse_on_partial": state.settings.get("auto_reverse_on_partial", False),
+        "drift_alert_pct": state.settings.get("drift_alert_pct", 5.0),
         "ws_connected": bool(state.ws_connected),
         "all_coins": list(COIN_LIST),
     }
@@ -593,6 +759,7 @@ async def update_settings(payload: SettingsIn):
         "paper_mode", "auto_exec", "trade_modal_usd",
         "threshold_pct", "slippage_pct", "enabled_coins",
         "daily_loss_limit_usd", "max_daily_trades", "bot_enabled",
+        "auto_reverse_on_partial", "drift_alert_pct",
     ):
         v = getattr(payload, f)
         if v is not None:
@@ -637,10 +804,16 @@ async def execute_manual(payload: ExecuteOpportunityIn):
         pk = _decrypt_cred("phantom_private_key")
         if not bk or not bs or not pk:
             raise HTTPException(status_code=400, detail="Live trading requires Binance + Phantom keys in Settings")
+        modal_now = float(state.settings.get("trade_modal_usd") or 0)
+        ok, reason = await _preflight_balance_check(opp, modal_now)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Pre-flight blocked: {reason}")
         trade = await execute_trade_live(opp, bk, bs, pk)
     trade["trigger"] = "manual"
     await db.trades.insert_one({**trade, "_id": trade["id"]})
     await _notify_trade(trade)
+    if trade.get("status") in ("partial", "reversed"):
+        await _notify_partial(trade)
     state.daily_trades += 1
     state.daily_pnl += float(trade.get("profit_usd") or 0)
     return trade
@@ -796,6 +969,69 @@ async def clear_opportunity_log():
     r = await db.opportunity_log.delete_many({})
     state.last_opp_log_ts = {}
     return {"deleted": r.deleted_count, "status": "ok"}
+
+
+@api.get("/inventory-drift")
+async def get_inventory_drift():
+    """Compute current inventory drift vs baseline for each coin."""
+    snapshot = await _compute_inventory_snapshot()
+    drift_threshold = float(state.settings.get("drift_alert_pct") or 5.0)
+    imbalance_threshold = 40.0
+    coins = []
+    for coin, current in snapshot.items():
+        baseline = state.inventory_baseline.get(coin)
+        if not baseline:
+            coins.append({
+                "coin": coin,
+                "current": current,
+                "baseline": None,
+                "drift_pct": None,
+                "imbalance_pct": None,
+                "status": "no_baseline",
+            })
+            continue
+        m = _compute_drift(coin, current, baseline)
+        if abs(m["drift_pct"]) > drift_threshold:
+            status = "drift_exceeded"
+        elif m["imbalance_pct"] > imbalance_threshold:
+            status = "imbalance_high"
+        else:
+            status = "ok"
+        coins.append({
+            "coin": coin,
+            "current": current,
+            "baseline": baseline,
+            **m,
+            "status": status,
+        })
+    return {
+        "coins": coins,
+        "drift_alert_pct": drift_threshold,
+        "imbalance_alert_pct": imbalance_threshold,
+        "baseline_set": bool(state.inventory_baseline),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@api.post("/inventory-baseline/reset")
+async def reset_inventory_baseline():
+    """Snapshot current CEX+DEX balances as the new inventory baseline."""
+    snapshot = await _compute_inventory_snapshot()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    baseline = {}
+    for coin, q in snapshot.items():
+        baseline[coin] = {**q, "ts": now_iso}
+    state.inventory_baseline = baseline
+    state.last_drift_alert_ts = {}
+    try:
+        await db.settings.update_one(
+            {"_id": SETTINGS_ID},
+            {"$set": {"inventory_baseline": baseline}},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"persist baseline: {e}")
+    return {"baseline": baseline, "coins": len(baseline), "ts": now_iso}
 
 
 @api.post("/backtest-strategies")

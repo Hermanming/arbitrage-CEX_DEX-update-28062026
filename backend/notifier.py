@@ -80,6 +80,58 @@ def _format_balance_lines(balances: dict, prices: dict | None, source: str) -> t
     return lines, total_usd
 
 
+def format_drift_alert_msg(coin: str, m: dict, drift_threshold: float, imbalance_threshold: float) -> str:
+    """Format an inventory drift alert for Telegram."""
+    drift_pct = float(m.get("drift_pct") or 0)
+    imbalance_pct = float(m.get("imbalance_pct") or 0)
+    baseline_total = float(m.get("baseline_total") or 0)
+    current_total = float(m.get("current_total") or 0)
+    current_cex = float(m.get("current_cex") or 0)
+    current_dex = float(m.get("current_dex") or 0)
+
+    icon = "⚠️" if abs(drift_pct) > drift_threshold else "🔶"
+    parts = [
+        f"{icon} *Inventory Drift Alert* · `{coin}`",
+        "",
+        f"*Baseline total:* `{baseline_total:.6f}`",
+        f"*Current total:*  `{current_total:.6f}`",
+        f"*Drift:* `{drift_pct:+.2f}%`  (threshold {drift_threshold:.1f}%)",
+        "",
+        f"*CEX side:* `{current_cex:.6f}`",
+        f"*DEX side:* `{current_dex:.6f}`",
+        f"*Imbalance:* `{imbalance_pct:.2f}%`  (threshold {imbalance_threshold:.0f}%)",
+        "",
+        "ℹ️ Rebalance manual: withdraw dari sisi penuh ke sisi kosong, atau /api/inventory-baseline/reset jika sengaja.",
+    ]
+    return "\n".join(parts)
+
+
+def format_partial_trade_alert_msg(trade: dict) -> str:
+    """Format urgent alert for partial/failed trades requiring manual intervention."""
+    coin = trade.get("coin") or "?"
+    status = trade.get("status") or "unknown"
+    err = trade.get("error") or "no detail"
+    attempts = trade.get("jupiter_attempts") or 0
+    reversed_cex = trade.get("reversed_cex") or False
+
+    icon = "🟡" if status == "reversed" else "🚨"
+    parts = [
+        f"{icon} *Partial Trade — Manual Check* · `{coin}`",
+        "",
+        f"*Status:* `{status.upper()}`",
+        f"*Buy side:* `{trade.get('buy_side')}` · *Sell side:* `{trade.get('sell_side')}`",
+        f"*Modal:* `${float(trade.get('modal_usd') or 0):.2f}`",
+        f"*Jupiter attempts:* `{attempts}/3`",
+    ]
+    if reversed_cex:
+        parts.append(f"*CEX auto-reversed:* ✅ position flattened")
+    else:
+        parts.append(f"*CEX auto-reversed:* ❌ position unhedged — review immediately!")
+    parts.append("")
+    parts.append(f"*Error:* `{err[:300]}`")
+    return "\n".join(parts)
+
+
 def format_daily_summary_msg(summary: dict) -> str:
     """Format the end-of-day Telegram summary (WIB day just ended)."""
     total_profit = float(summary.get("total_profit") or 0.0)

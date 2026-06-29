@@ -26,6 +26,8 @@ export const api = {
   clearOpportunityLog: () => http.post("/clear-opportunity-log").then((r) => r.data),
   backtestStrategies: (configs, from_date, to_date) =>
     http.post("/backtest-strategies", { configs, from_date, to_date }).then((r) => r.data),
+  inventoryDrift: () => http.get("/inventory-drift").then((r) => r.data),
+  resetInventoryBaseline: () => http.post("/inventory-baseline/reset").then((r) => r.data),
   resetStats: () => http.post("/reset-stats").then((r) => r.data),
   coins: () => http.get("/coins").then((r) => r.data),
 };

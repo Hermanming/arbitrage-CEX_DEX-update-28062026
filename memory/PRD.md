@@ -64,6 +64,7 @@
     - **Pre-flight balance check** — `_preflight_balance_check()` runs before every live execute (auto + manual). Verifies USDT/USDC stable + coin inventory on both venues + 0.005 SOL gas on Phantom. Fail-open if API keys unset.
     - **Inventory drift monitor** — `inventory_drift_task` (5min loop) compares current balances vs persisted baseline. Telegram alert when total drift > `drift_alert_pct` (default 5%) OR side imbalance > 40%. Throttled 1h/coin. Endpoints: `GET /api/inventory-drift`, `POST /api/inventory-baseline/reset`. UI: input + reset button in Settings.
     - **Atomic Jupiter retry + auto-reverse** — `execute_trade_live` retries failed Jupiter swap 3× with backoff (0s/2s/5s). On final failure + `auto_reverse_on_partial=True`, auto-flattens CEX leg (opposite-side market order). New trade fields: `jupiter_attempts`, `reversed_cex`, `executed_qty`. Urgent Telegram alert via `_notify_partial` for status `partial`/`reversed`.
+- **Inventory Health Widget on Dashboard** — New component `<InventoryHealth />` polling `/api/inventory-drift` every 30s. Shows per-coin: CEX qty · DEX qty · Total · Baseline · Drift% · Imbalance% · Status badge (🟢 OK / 🟡 IMBALANCE / 🔴 DRIFT / ⚪ NO BASELINE). Header shows aggregate status. Empty state with link to Settings if baseline not yet set.
 
 ## Backend Tests
 - Iteration 1: 18/18 (initial endpoints).

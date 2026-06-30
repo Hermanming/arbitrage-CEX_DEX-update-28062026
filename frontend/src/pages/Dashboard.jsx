@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import StatsCards from "@/components/StatsCards";
+import InventoryHealth from "@/components/InventoryHealth";
 import ScreeningTable from "@/components/ScreeningTable";
 import OpportunitiesTable from "@/components/OpportunitiesTable";
 import TradeHistoryTable from "@/components/TradeHistoryTable";
@@ -84,6 +85,8 @@ export default function Dashboard() {
       </div>
 
       <StatsCards stats={stats} />
+
+      <InventoryHealth />
 
       <OpportunitiesTable opportunities={opps} onTraded={loadTrades} />
 
